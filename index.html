@@ -67,7 +67,7 @@
 <script type="text/babel">
 const { useState, useRef, useEffect, useCallback } = React;
 
-const APP_VERSION = "v1.3";
+const APP_VERSION = "v1.4";
 
 /* ============================================================
    ステージ定義（6ステージ・一本道進行）
@@ -80,10 +80,10 @@ const STAGES = [
     desc:"温度をよむ / だんだん広がる / えらぶ" },
   { id:2, theme:"thermometer", name:"温度計②", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"place",  scaffold:"half",  zoom:false,
     desc:"温度をよむ / だんだん広がる / あわせる" },
-  { id:3, theme:"ruler",       name:"定規①",   min:0, max:2,  step:0.1,  decimals:1, baseStep:0.1, op:"choose", scaffold:"full",  zoom:false,
-    desc:"0〜2cm / 1めもり 0.1 / すべての数字 / えらぶ" },
-  { id:4, theme:"ruler",       name:"定規②",   min:0, max:3,  step:0.1,  decimals:1, baseStep:0.1, op:"type",   scaffold:"whole", zoom:false,
-    desc:"0〜3cm / 1めもり 0.1 / かく" },
+  { id:3, theme:"ruler",       name:"定規①",   min:0, max:2,  step:0.1,  decimals:1, baseStep:0.1, op:"choose", scaffold:"half",  zoom:false,
+    desc:"0〜2cm / 1めもり 0.1 / えらぶ" },
+  { id:4, theme:"ruler",       name:"定規②",   min:0, max:2,  step:0.1,  decimals:1, baseStep:0.1, op:"type",   scaffold:"whole", zoom:false,
+    desc:"0〜2cm / 1めもり 0.1 / かく" },
   { id:5, theme:"beaker",      name:"ビーカー", min:0, max:1,  step:0.01, decimals:2, baseStep:0.1, op:"place",  scaffold:"half",  zoom:true,
     desc:"0〜1L / ピンチで0.01が出現 / あわせる" },
   { id:6, theme:"abstract",    name:"数直線",   min:0, max:1,  step:0.001,decimals:3, baseStep:0.1, op:"type",   scaffold:"whole", zoom:true,
@@ -247,23 +247,22 @@ function NumberLine({stage, zoom, zoomCenter, showAllLabels, hintVals, arrow, ma
         const isWhole = Math.abs(t.v-Math.round(t.v))<1e-6;
         const big = t.isBase && (stage.decimals===0 || isWhole);
         const half = t.isBase ? (big?18:13) : 9;
-        const col = t.isBase ? "var(--line)" : "var(--mint)";
 
-        let showLabel=false, labelText="", labelCol="var(--soft)", labelSize=15, fy=lineY+40;
+        let showLabel=false, labelText="", labelSize=15, fy=lineY+40;
         if(t.isBase){
           const zoomed = zoom>1.05;
           const isHintVal = hintVals && hintVals.some(h=>Math.abs(h-t.v)<1e-6);
           const allowed = isEnd || showAllLabels || zoomed || isHintVal || baseLabelVisible(t.v, stage.scaffold, stage.decimals);
           showLabel = allowed;
           labelText = disp(t.v, stage.baseStep<1?1:0);
-          labelCol = (stage.decimals===0||isWhole) ? "var(--ink)" : "var(--soft)";
           labelSize = big?19:15;
-        } else if(t.labelable){
+        } else if(t.labelable || (hintVals && hintVals.some(h=>Math.abs(h-t.v)<1e-6))){
           showLabel=true; labelText=disp(t.v,t.dec);
-          // 最も細かい段は緑、中間段（0.01など）は少し濃い緑で区別
-          const isFinest = Math.abs(t.s-finest.s)<1e-9;
-          labelCol="var(--mint-dark)"; labelSize=isFinest?12.5:13; fy=lineY+32;
+          labelSize = 13; fy=lineY+32;
         }
+        // 数字が出る目もりは黒、出ない目もりは緑
+        const col = showLabel ? "var(--line)" : "var(--mint)";
+        const labelCol = "var(--ink)";
         return (
           <g key={"tk"+i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
             <line x1={x} y1={lineY-half} x2={x} y2={lineY+half} stroke={col} strokeWidth={t.isBase?(big?3:2):2}/>
@@ -330,7 +329,7 @@ function Thermometer({stage, range, labelMode, tickStep, marker, pickable, onPic
     if(hintVals && hintVals.some(h=>Math.abs(h-v)<1e-6)) return true; // ヒント：正答の前後を表示
     if(arrow===v) return false; // 矢印で問うている値は隠す
     if(labelMode==="all") return true;
-    if(labelMode==="fivesTens") return v===5 || v===10 || v===min || v===max;
+    if(labelMode==="fivesTens") return (Math.abs(v % 5)<1e-6) || v===min || v===max;
     // scaled：大きな目盛り（10とび、または範囲の代表点）にだけ振る
     const bigStep = tickStep>=10 ? tickStep : tickStep*5;
     return Math.abs(v % bigStep)<1e-6 || v===min || v===max;
@@ -677,12 +676,13 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   // 1問目:0〜10 全表示 / 2問目:0〜10 5と10のみ / 3問目以降:範囲を段階拡大
   const isThermo = stage.theme==="thermometer";
   const thermoSetup = (qno)=>{
-    // 1目もりは常に1度。範囲だけ少しずつ広げ、ラベルは段階的に間引く。
-    if(qno===1) return {min:0,max:10,tickStep:1,labelMode:"all"};
+    // 1目もりは常に1度。最大値を 5→10→15→20→25 と段階的に広げる。
+    // 範囲が広がってもラベルが密集しないよう、5とびにだけ数字を振る。
+    if(qno===1) return {min:0,max:5, tickStep:1,labelMode:"all"};
     if(qno===2) return {min:0,max:10,tickStep:1,labelMode:"fivesTens"};
-    if(qno===3) return {min:0,max:12,tickStep:1,labelMode:"fivesTens"};
-    if(qno===4) return {min:0,max:14,tickStep:1,labelMode:"scaled"};
-    return {min:0,max:15,tickStep:1,labelMode:"scaled"};
+    if(qno===3) return {min:0,max:15,tickStep:1,labelMode:"fivesTens"};
+    if(qno===4) return {min:0,max:20,tickStep:1,labelMode:"fivesTens"};
+    return {min:0,max:25,tickStep:1,labelMode:"fivesTens"};
   };
 
   const [qNo,setQNo] = useState(1);
@@ -696,8 +696,8 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   // 温度計は目盛り間隔で答える（tickStepが解答精度）
   const curStep = isThermo ? thermoTickStep : answerStep;
 
-  const maxZoom = canZoom ? Math.round((stage.max-stage.min)/(answerStep*8)) : 1;
-  const zoomForReveal = canZoom ? Math.max(3,(stage.max-stage.min)/(answerStep*12)) : 1;
+  const maxZoom = canZoom ? Math.min(60, Math.round((stage.max-stage.min)/(answerStep*8))) : 1;
+  const zoomForReveal = canZoom ? Math.min(maxZoom, Math.max(3,(stage.max-stage.min)/(answerStep*12))) : 1;
 
   const [target,setTarget] = useState(()=> rnd(0,10,1));
   const [zoom,setZoom] = useState(1);
@@ -890,7 +890,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       </div>
 
       {/* ヒント */}
-      {phase==="ask" && (qNo>1 || stage.id===5) && (
+      {phase==="ask" && (qNo>1 || stage.id===5 || stage.id===6) && (
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,fontSize:12.5,color:"var(--soft)"}}>
           <span>{stage.id===5
             ? (hint?"えらんだ数の下1けたも見えています":"えらんだ数の下1けたはかくれています")
