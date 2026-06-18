@@ -21,7 +21,8 @@
     --merc:#e25b4a;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-  html,body{margin:0;padding:0;height:100%;}
+  html{height:100%;}
+  body{margin:0;padding:0;min-height:100%;}
   body{
     font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
     background:
@@ -30,9 +31,20 @@
       var(--paper);
     color:var(--ink);
     overflow-x:hidden;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
     touch-action:manipulation;
   }
   #root{max-width:920px;margin:0 auto;padding:20px 18px 64px;}
+  /* タブレット横画面など、縦が低い画面で全体が収まるよう調整 */
+  @media (max-height:560px){
+    #root{padding:10px 16px 40px;}
+    #root svg{max-height:46vh;}
+    .play-area{display:flex;flex-direction:column;}
+  }
+  @media (orientation:landscape) and (max-height:600px){
+    #root svg{max-height:42vh;}
+  }
   .reduced * { transition:none !important; animation:none !important; }
   @keyframes pop{0%{transform:scale(.6);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
   @keyframes fillup{from{transform:scaleY(0);}to{transform:scaleY(1);}}
@@ -48,7 +60,7 @@
 <script type="text/babel">
 const { useState, useRef, useEffect, useCallback } = React;
 
-const APP_VERSION = "v1.1";
+const APP_VERSION = "v1.2";
 
 /* ============================================================
    ステージ定義（6ステージ・一本道進行）
@@ -86,12 +98,18 @@ const THEME_INFO = {
 const QUESTIONS_PER_STAGE = 5;
 
 const fmt = (v,d)=> v.toFixed(d);
-// 表示用：末尾の0を消す（0.20→0.2、0.200→0.2、3.0→3）。ただし整数桁は残す
+// 表示用：末尾の0を消す（0.20→0.2、0.200→0.2、3.0→3、0.10→0.1、1.0→1）。
 const disp = (v,d)=>{
   if(d<=0) return v.toFixed(0);
   let s = v.toFixed(d);
-  s = s.replace(/\.?0+$/,"");   // 末尾の0と、不要になった小数点を除去
+  if(s.indexOf(".")>=0){ s = s.replace(/0+$/,"").replace(/\.$/,""); } // 末尾0と裸の小数点を除去
   return s;
+};
+// ステージ5：選んだ数の下1桁を隠す（ヒント時は全表示）。固定小数で末尾を□に。
+const maskChosen = (v, d, stage, hint)=>{
+  if(hint || stage.id!==5 || d<=0) return disp(v, d);
+  const full = v.toFixed(d);            // 例 "0.47"
+  return full.slice(0, -1) + "□";       // 例 "0.4□"
 };
 const rnd = (min,max,step)=>{
   const n = Math.round((max-min)/step);
@@ -224,7 +242,8 @@ function NumberLine({stage, zoom, zoomCenter, showAllLabels, arrow, marker, pick
 
         let showLabel=false, labelText="", labelCol="var(--soft)", labelSize=15, fy=lineY+40;
         if(t.isBase){
-          const allowed = isEnd || showAllLabels || baseLabelVisible(t.v, stage.scaffold, stage.decimals);
+          const zoomed = zoom>1.05;
+          const allowed = isEnd || showAllLabels || zoomed || baseLabelVisible(t.v, stage.scaffold, stage.decimals);
           showLabel = allowed;
           labelText = disp(t.v, stage.baseStep<1?1:0);
           labelCol = (stage.decimals===0||isWhole) ? "var(--ink)" : "var(--soft)";
@@ -427,7 +446,9 @@ function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, s
         const isWhole=Math.abs(t.v-Math.round(t.v))<1e-6;
         let showLabel=false, labelText="", labelCol="var(--soft)", size=14;
         if(t.isBase){
-          showLabel = showAllLabels || baseLabelVisible(t.v, stage.scaffold, stage.decimals) || isWhole;
+          // 拡大中は手掛かりとして0.1きざみの基準ラベルを必ず表示
+          const zoomed = zoom>1.05;
+          showLabel = showAllLabels || zoomed || baseLabelVisible(t.v, stage.scaffold, stage.decimals) || isWhole;
           labelText=disp(t.v,1); labelCol=isWhole?"var(--ink)":"var(--soft)"; size=15;
         } else if(labelFinest && Math.abs(t.s-finest.s)<1e-9){
           showLabel=true; labelText=disp(t.v,t.dec); labelCol="var(--mint-dark)"; size=12;
@@ -709,7 +730,8 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
     buildQuestion(nq);
   };
 
-  /* ピンチ */
+  /* ピンチ＆スクロール（パン） */
+  const panLast = useRef(null);
   const onPointerDown=(e)=>{
     if(!canZoom)return;
     pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
@@ -717,6 +739,11 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       const pts=[...pointers.current.values()];
       startDist.current=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
       startZoom.current=zoom;
+      panLast.current=null;
+      if(wrapRef.current) wrapRef.current.dataset.pinching="1";
+    }else if(pointers.current.size===1 && zoom>1.05){
+      // 1本指ドラッグでスクロール開始
+      panLast.current={y:e.clientY};
     }
   };
   const onPointerMove=(e)=>{
@@ -729,10 +756,31 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       z=Math.min(maxZoom,Math.max(1,z));
       setZoom(z);
       const focus = stage.op==="place" && picked!=null ? picked : target;
-      if(z>1.05) setZoomCenter(focus);
+      if(z>1.05 && zoom<=1.05) setZoomCenter(focus); // 拡大開始時だけ注目点へ寄せる
+    }else if(pointers.current.size===1 && panLast.current && zoom>1.05){
+      // ドラッグ量(px)を値の移動量に変換してzoomCenterを動かす（上ドラッグ＝大きい値へ）
+      const rect = wrapRef.current ? wrapRef.current.getBoundingClientRect() : null;
+      const dyPx = e.clientY - panLast.current.y;
+      panLast.current.y = e.clientY;
+      panLast.current.moved = (panLast.current.moved||0) + Math.abs(dyPx);
+      if(panLast.current.moved>6 && wrapRef.current) wrapRef.current.dataset.pinching="1"; // ドラッグ中はタップ無効
+      const span = stage.max - stage.min;
+      const viewSpan = span / zoom;          // いま見えている値の幅
+      const heightPx = rect ? rect.height : 320;
+      const valPerPx = viewSpan / heightPx;  // 1pxあたりの値
+      setZoomCenter(c=>{
+        let nv = c + dyPx*valPerPx;           // 下に引くと数字が下がる（自然なスクロール）
+        const half = viewSpan/2;
+        nv = Math.min(stage.max-half, Math.max(stage.min+half, nv));
+        return nv;
+      });
     }
   };
-  const onPointerUp=(e)=>{ pointers.current.delete(e.pointerId); };
+  const onPointerUp=(e)=>{
+    pointers.current.delete(e.pointerId);
+    if(pointers.current.size<2 && wrapRef.current) wrapRef.current.dataset.pinching="0";
+    if(pointers.current.size===0) panLast.current=null;
+  };
 
   const zoomBy=(f)=>{
     const z=Math.min(maxZoom,Math.max(1,zoom*f));
@@ -807,9 +855,11 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       </div>
 
       {/* ヒント */}
-      {phase==="ask" && qNo>1 && (
+      {phase==="ask" && (qNo>1 || stage.id===5) && (
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,fontSize:12.5,color:"var(--soft)"}}>
-          <span>{showAllLabels?"数字が見えています":"目もりの数字はかくれています"}</span>
+          <span>{stage.id===5
+            ? (hint?"えらんだ数の下1けたも見えています":"えらんだ数の下1けたはかくれています")
+            : (showAllLabels?"数字が見えています":"目もりの数字はかくれています")}</span>
           <button onClick={()=>setHint(h=>!h)}
             style={{background:hint?"var(--sun)":"#fff",border:"2px solid var(--sun)",borderRadius:12,
               padding:"6px 14px",fontWeight:800,cursor:"pointer",color:"var(--ink)",fontSize:13}}>
@@ -869,7 +919,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       {stage.op==="place" && phase==="ask" && (
         <div style={{textAlign:"center"}}>
           <div style={{fontSize:13,color:"var(--soft)",marginBottom:8}}>
-            えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?disp(picked,ansDec)+th.unit:"—"}</b></div>
+            えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?maskChosen(picked,ansDec,stage,hint)+th.unit:"—"}</b></div>
           <button disabled={picked==null} onClick={()=>judge(picked)} style={{...primaryBtn,opacity:picked==null?.4:1}}>これにきめる！</button>
         </div>
       )}
