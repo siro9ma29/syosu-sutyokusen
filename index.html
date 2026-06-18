@@ -67,7 +67,7 @@
 <script type="text/babel">
 const { useState, useRef, useEffect, useCallback } = React;
 
-const APP_VERSION = "v1.4";
+const APP_VERSION = "v1.5";
 
 /* ============================================================
    ステージ定義（6ステージ・一本道進行）
@@ -356,8 +356,8 @@ function Thermometer({stage, range, labelMode, tickStep, marker, pickable, onPic
       })}
       {arrow!=null && (
         <g>
-          <path d={`M${cx-32} ${yOf(arrow)} l-16 -9 v18 z`} fill="var(--coral)"/>
-          <text x={cx-54} y={yOf(arrow)+7} textAnchor="end" fontSize="26" fontWeight="900" fill="var(--coral)">?</text>
+          <path d={`M${cx+34} ${yOf(arrow)} l16 -9 v18 z`} fill="var(--coral)"/>
+          <text x={cx+56} y={yOf(arrow)+7} textAnchor="start" fontSize="26" fontWeight="900" fill="var(--coral)">?</text>
         </g>
       )}
       {marker!=null && !reveal && (
@@ -391,25 +391,38 @@ function Thermometer({stage, range, labelMode, tickStep, marker, pickable, onPic
    目盛りのフェードインは画面上の間隔(px)で判定する。
    ============================================================ */
 function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, showAllLabels, hintVals}){
-  const W=260, top=30, bot=270;        // 枠（常に固定）
+  const W=260, top=30, bot=270;        // 枠の基準（拡大前）
   const left=66, right=194;
   const baseUsable = bot-top;          // zoom=1 のときの液量域の高さ
-  const H = bot + 50;                  // SVGの高さ（常に固定）
+  const H = bot + 50;                  // SVGの高さ
   const span = stage.max - stage.min;
 
-  // 拡大時、液量域(top〜bot)の中で zoom 倍に引き伸ばす。
+  // --- ビーカー本体の見た目の拡大（最大150%）---
+  // ズーム量に応じてビーカーの枠を最大1.5倍まで拡大する。
+  // 拡大の基点は左下の角(left, bot)。右と上へ広がり、目盛りの横位置(left)は不変。
+  const MAX_VIS = 1.5;
+  const vis = Math.min(MAX_VIS, Math.max(1, zoom));   // 1.0〜1.5
+  // 拡大後の枠の上端・右端（左端と下端は固定）
+  const fTop  = bot - baseUsable*vis;                 // 上へ伸びる
+  const fRight = left + (right-left)*vis;             // 右へ伸びる
+  const usableFrame = bot - fTop;                     // 拡大後の枠の高さ
+  // 拡大したビーカーが上に伸びても切れないよう、viewBoxの上端に余白をとる
+  const vbTop = Math.min(0, fTop - 16);
+  const vbH = H - vbTop;
+
+  // 拡大時、液量域(fTop〜bot)の中で zoom 倍に引き伸ばす。
   // focus（注目している値）が常に枠の中央に来るように原点をずらす。
-  const usableH = baseUsable * zoom;            // 引き伸ばした内部の高さ
+  const usableH = usableFrame * zoom;           // 引き伸ばした内部の高さ
   const centerV = focus==null ? (stage.min+stage.max)/2 : focus;
-  const frameMidY = (top+bot)/2;                // 枠の縦中央
-  // 値→「拡大した内部座標系」での仮想y（底=botZv, 上=topZv）
-  const yFull=(v)=> (top+usableH) - ((v-stage.min)/span)*usableH;
+  const frameMidY = (fTop+bot)/2;               // 拡大後の枠の縦中央
+  // 値→「拡大した内部座標系」での仮想y（底=bot, 上=fTop）
+  const yFull=(v)=> (fTop+usableH) - ((v-stage.min)/span)*usableH;
   // centerV が frameMidY に来るようにオフセット
   let offset = frameMidY - yFull(centerV);
   // 端で内部がはみ出さないようにクランプ
   const topZv0 = yFull(stage.max) + offset;     // 拡大内部の上端
   const botZv0 = yFull(stage.min) + offset;     // 拡大内部の下端
-  if(topZv0 > top) offset += (top - topZv0);
+  if(topZv0 > fTop) offset += (fTop - topZv0);
   if(botZv0 < bot) offset += (bot - botZv0);
   const yOf=(v)=> yFull(v) + offset;
   const pxGap=(s)=> (s/span)*usableH;           // 刻みsの画面上の高さ(px)
@@ -436,22 +449,23 @@ function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, s
 
   const fillV = reveal? answer : (marker!=null?marker:stage.min);
   const fillY = yOf(Math.min(stage.max,Math.max(stage.min,fillV)));
-  // 枠内に見えているものだけ描く判定
-  const inFrame=(y)=> y>=top-2 && y<=bot+2;
+  // 枠内に見えているものだけ描く判定（拡大後の上端fTop基準）
+  const inFrame=(y)=> y>=fTop-2 && y<=bot+2;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`}
+    <svg viewBox={`0 ${vbTop} ${W} ${vbH}`}
          style={{width:"100%",maxWidth:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none",touchAction:"none"}}>
-      <clipPath id="beakerClip"><rect x={left} y={top} width={right-left} height={bot-top}/></clipPath>
-      <clipPath id="beakerTickClip"><rect x={0} y={top-10} width={W} height={bot-top+22}/></clipPath>
+      <clipPath id="beakerClip"><rect x={left} y={fTop} width={fRight-left} height={bot-fTop}/></clipPath>
+      <clipPath id="beakerTickClip"><rect x={0} y={fTop-10} width={W} height={bot-fTop+22}/></clipPath>
       {/* 液（平面：水平な水面）。枠でクリップ */}
       <g clipPath="url(#beakerClip)" style={{transition:"all .25s"}}>
-        <rect x={left} y={fillY} width={right-left} height={(bot+200)-fillY} fill="var(--glass)" style={{transition:"all .25s"}}/>
-        <rect x={left} y={fillY} width={right-left} height="3" fill="#7fc3e0" style={{transition:"all .25s"}}/>
+        <rect x={left} y={fillY} width={fRight-left} height={(bot+200)-fillY} fill="var(--glass)" style={{transition:"all .25s"}}/>
+        <rect x={left} y={fillY} width={fRight-left} height="3" fill="#7fc3e0" style={{transition:"all .25s"}}/>
       </g>
-      {/* 容器（枠は固定） */}
-      <path d={`M${left} ${top-10} L${left} ${bot} L${right} ${bot} L${right} ${top-10}`}
-        fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
+      {/* 容器（左下の角を基点に、右上方向へ拡大） */}
+      <path d={`M${left} ${fTop-10} L${left} ${bot} L${fRight} ${bot} L${fRight} ${fTop-10}`}
+        fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"
+        style={{transition:"all .25s"}}/>
       {/* 目盛り（左壁の内側）。枠でクリップして外には出さない */}
       <g clipPath="url(#beakerTickClip)">
       {ticks.map((t,i)=>{
@@ -477,23 +491,23 @@ function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, s
       })}
       {marker!=null && !reveal && inFrame(yOf(marker)) && (
         <g style={{transition:"all .25s"}}>
-          <line x1={right} y1={yOf(marker)} x2={right+24} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
-          <path d={`M${right} ${yOf(marker)} l13 -8 v16 z`} fill="var(--coral)"/>
+          <line x1={fRight} y1={yOf(marker)} x2={fRight+24} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
+          <path d={`M${fRight} ${yOf(marker)} l13 -8 v16 z`} fill="var(--coral)"/>
         </g>
       )}
       {reveal && answer!=null && inFrame(yOf(answer)) && (
-        <text x={right+9} y={yOf(answer)+6} fontSize="16" fontWeight="800" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
+        <text x={fRight+9} y={yOf(answer)+6} fontSize="16" fontWeight="800" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
       )}
       </g>
       {pickable && (
-        <rect x={left-34} y={top} width={right-left+68} height={bot-top} fill="transparent" style={{cursor:"pointer"}}
+        <rect x={left-34} y={fTop} width={fRight-left+68} height={bot-fTop} fill="transparent" style={{cursor:"pointer"}}
           onPointerDown={(e)=>{
             if(e.currentTarget.ownerSVGElement.dataset.pinching==="1") return; // ピンチ中はタップ無効
             const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
-            const py=(e.clientY-rect.top)/rect.height*H;
+            const py=vbTop + (e.clientY-rect.top)/rect.height*vbH;
             // 画面y → 内部仮想y → 値
             const yv = py - offset;
-            const val = stage.min + ((top+usableH - yv)/usableH)*span;
+            const val = stage.min + ((fTop+usableH - yv)/usableH)*span;
             const snapped=Math.round(val/stage.step)*stage.step;
             onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
           }}/>
@@ -713,6 +727,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   const [choices,setChoices] = useState([]);
 
   const wrapRef = useRef(null);
+  const prevTarget = useRef(null);
   const pointers = useRef(new Map());
   const startDist = useRef(0);
   const startZoom = useRef(1);
@@ -730,7 +745,16 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   const buildQuestion = (qno)=>{
     const setup = isThermo ? thermoSetup(qno||qNo) : {min:stage.min,max:stage.max,tickStep:answerStep};
     const st = isThermo ? setup.tickStep : answerStep;
-    const t = rnd(setup.min, setup.max, st);
+    // 直前の問題と同じ答えにならないよう、必要なら引き直す（候補が2つ以上ある場合のみ）
+    const span = Math.round((setup.max-setup.min)/st);
+    let t = rnd(setup.min, setup.max, st);
+    if(span>2){ // 内部の候補が2つ以上あるときだけ重複回避
+      let guard=0;
+      while(prevTarget.current!=null && Math.abs(t-prevTarget.current)<1e-9 && guard<20){
+        t = rnd(setup.min, setup.max, st); guard++;
+      }
+    }
+    prevTarget.current = t;
     setTarget(t);
     setPhase("ask"); setCorrect(null); setPicked(null); setTyped("");
     setZoom(1); setZoomCenter((stage.min+stage.max)/2); setHint(false);
@@ -741,7 +765,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
     }
   };
 
-  useEffect(()=>{ setQNo(1); setCorrectCount(0); setStageDone(false); buildQuestion(1); },[stage.id]);
+  useEffect(()=>{ setQNo(1); setCorrectCount(0); setStageDone(false); prevTarget.current=null; buildQuestion(1); },[stage.id]);
 
   const nextQuestion=()=>{
     if(qNo>=QUESTIONS_PER_STAGE){
@@ -953,8 +977,10 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       )}
       {stage.op==="place" && phase==="ask" && (
         <div style={{textAlign:"center"}}>
-          <div style={{fontSize:13,color:"var(--soft)",marginBottom:8}}>
-            えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?maskChosen(picked,ansDec,stage,hint)+th.unit:"—"}</b></div>
+          {stage.theme!=="thermometer" && (
+            <div style={{fontSize:13,color:"var(--soft)",marginBottom:8}}>
+              えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?maskChosen(picked,ansDec,stage,hint)+th.unit:"—"}</b></div>
+          )}
           <button disabled={picked==null} onClick={()=>judge(picked)} style={{...primaryBtn,opacity:picked==null?.4:1}}>これにきめる！</button>
         </div>
       )}
