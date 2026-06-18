@@ -32,7 +32,7 @@
     overflow-x:hidden;
     touch-action:manipulation;
   }
-  #root{max-width:860px;margin:0 auto;padding:18px 16px 60px;}
+  #root{max-width:920px;margin:0 auto;padding:20px 18px 64px;}
   .reduced * { transition:none !important; animation:none !important; }
   @keyframes pop{0%{transform:scale(.6);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
   @keyframes fillup{from{transform:scaleY(0);}to{transform:scaleY(1);}}
@@ -56,9 +56,9 @@ const { useState, useRef, useEffect, useCallback } = React;
    ============================================================ */
 const STAGES = [
   { id:1, theme:"thermometer", name:"温度計①", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"choose", scaffold:"full",  zoom:false,
-    desc:"0〜10℃ / 1めもり 1 / えらぶ" },
+    desc:"温度をよむ / だんだん広がる / えらぶ" },
   { id:2, theme:"thermometer", name:"温度計②", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"place",  scaffold:"half",  zoom:false,
-    desc:"0〜10℃ / 1めもり 1 / あわせる" },
+    desc:"温度をよむ / だんだん広がる / あわせる" },
   { id:3, theme:"ruler",       name:"定規①",   min:0, max:3,  step:0.1,  decimals:1, baseStep:0.1, op:"choose", scaffold:"half",  zoom:false,
     desc:"0〜3cm / 1めもり 0.1 / えらぶ・あわせる" },
   { id:4, theme:"ruler",       name:"定規②",   min:0, max:3,  step:0.1,  decimals:1, baseStep:0.1, op:"type",   scaffold:"whole", zoom:false,
@@ -84,6 +84,13 @@ const THEME_INFO = {
 const QUESTIONS_PER_STAGE = 5;
 
 const fmt = (v,d)=> v.toFixed(d);
+// 表示用：末尾の0を消す（0.20→0.2、0.200→0.2、3.0→3）。ただし整数桁は残す
+const disp = (v,d)=>{
+  if(d<=0) return v.toFixed(0);
+  let s = v.toFixed(d);
+  s = s.replace(/\.?0+$/,"");   // 末尾の0と、不要になった小数点を除去
+  return s;
+};
 const rnd = (min,max,step)=>{
   const n = Math.round((max-min)/step);
   const i = 1 + Math.floor(Math.random()*(n-1)); // 端を避ける
@@ -188,8 +195,8 @@ function baseLabelVisible(v, scaffold, decimals){
    横向き数直線（定規・抽象用）
    ============================================================ */
 function NumberLine({stage, zoom, zoomCenter, showAllLabels, arrow, marker, pickable, onPick, answer, reveal}){
-  const W = 720, H = 150, padL = 44, padR = 44;
-  const lineY = 86;
+  const W = 720, H = 170, padL = 50, padR = 50;
+  const lineY = 92;
   const usable = W - padL - padR;
   const padFrac = padL / W;
 
@@ -210,18 +217,18 @@ function NumberLine({stage, zoom, zoomCenter, showAllLabels, arrow, marker, pick
         const isEnd = Math.abs(t.v-stage.min)<1e-9 || Math.abs(t.v-stage.max)<1e-9;
         const isWhole = Math.abs(t.v-Math.round(t.v))<1e-6;
         const big = t.isBase && (stage.decimals===0 || isWhole);
-        const half = t.isBase ? (big?16:12) : 8;
+        const half = t.isBase ? (big?18:13) : 9;
         const col = t.isBase ? "var(--line)" : "var(--mint)";
 
-        let showLabel=false, labelText="", labelCol="var(--soft)", labelSize=13, fy=lineY+38;
+        let showLabel=false, labelText="", labelCol="var(--soft)", labelSize=15, fy=lineY+40;
         if(t.isBase){
           const allowed = isEnd || showAllLabels || baseLabelVisible(t.v, stage.scaffold, stage.decimals);
           showLabel = allowed;
-          labelText = fmt(t.v, stage.baseStep<1?1:0);
+          labelText = disp(t.v, stage.baseStep<1?1:0);
           labelCol = (stage.decimals===0||isWhole) ? "var(--ink)" : "var(--soft)";
-          labelSize = big?17:13;
+          labelSize = big?19:15;
         } else if(labelFinest && Math.abs(t.s-finest.s)<1e-9){
-          showLabel=true; labelText=fmt(t.v,t.dec); labelCol="var(--mint-dark)"; labelSize=11; fy=lineY+30;
+          showLabel=true; labelText=disp(t.v,t.dec); labelCol="var(--mint-dark)"; labelSize=12.5; fy=lineY+32;
         }
         return (
           <g key={"tk"+i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
@@ -250,7 +257,7 @@ function NumberLine({stage, zoom, zoomCenter, showAllLabels, arrow, marker, pick
       {reveal && answer!=null && answer>=viewMin && answer<=viewMax && (
         <g>
           <line x1={xOf(answer)} y1={lineY-34} x2={xOf(answer)} y2={lineY+34} stroke="var(--mint-dark)" strokeWidth="3" strokeDasharray="5 4"/>
-          <text x={xOf(answer)} y={lineY-42} textAnchor="middle" fontSize="15" fontWeight="700" fill="var(--mint-dark)">{fmt(answer,stage.decimals)}</text>
+          <text x={xOf(answer)} y={lineY-42} textAnchor="middle" fontSize="15" fontWeight="700" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
         </g>
       )}
 
@@ -270,57 +277,72 @@ function NumberLine({stage, zoom, zoomCenter, showAllLabels, arrow, marker, pick
 
 /* ============================================================
    温度計（縦・整数）
+   range={min,max} は問題番号で動的に変わる。
+   labelMode: "all"=全部 / "fivesTens"=5と10のみ / "scaled"=目盛りステップごと
+   tickStep: 目盛りの間隔（範囲が広いと 5 や 10）
    ============================================================ */
-function Thermometer({stage, marker, pickable, onPick, answer, reveal, arrow}){
-  const W=200, H=300, cx=70, top=24, bot=240, bulbR=22;
+function Thermometer({stage, range, labelMode, tickStep, marker, pickable, onPick, answer, reveal, arrow}){
+  const W=240, H=380, cx=92, top=34, bot=320, bulbR=26;
+  const min=range.min, max=range.max;
   const usable = bot-top;
-  const yOf=(v)=> bot - ((v-stage.min)/(stage.max-stage.min))*usable;
+  const yOf=(v)=> bot - ((v-min)/(max-min))*usable;
   const ticks=[];
-  for(let v=stage.min; v<=stage.max+1e-9; v++){ ticks.push(v); }
-  const fillV = reveal ? answer : (marker!=null?marker:stage.min);
+  for(let v=min; v<=max+1e-9; v+=tickStep){ ticks.push(Math.round(v*1e6)/1e6); }
+  const fillV = reveal ? answer : (marker!=null?marker:min);
   const fillTop = yOf(fillV);
 
+  // ラベルを出すか
+  const labelVisible=(v)=>{
+    if(arrow===v) return false; // 矢印で問うている値は隠す
+    if(labelMode==="all") return true;
+    if(labelMode==="fivesTens") return v===5 || v===10 || v===min || v===max;
+    // scaled：大きな目盛り（10とび、または範囲の代表点）にだけ振る
+    const bigStep = tickStep>=10 ? tickStep : tickStep*5;
+    return Math.abs(v % bigStep)<1e-6 || v===min || v===max;
+  };
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
-      <rect x={cx-12} y={top-6} width="24" height={usable+12} rx="12" fill="#fff" stroke="var(--line)" strokeWidth="3"/>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:260,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
+      <rect x={cx-14} y={top-8} width="28" height={usable+16} rx="14" fill="#fff" stroke="var(--line)" strokeWidth="3"/>
       <circle cx={cx} cy={bot+bulbR-4} r={bulbR} fill="#fff" stroke="var(--line)" strokeWidth="3"/>
       {/* 水銀 */}
-      <circle cx={cx} cy={bot+bulbR-4} r={bulbR-6} fill="var(--merc)"/>
-      <rect x={cx-6} y={fillTop} width="12" height={bot-fillTop+4} fill="var(--merc)" style={{transition:"all .35s"}}/>
+      <circle cx={cx} cy={bot+bulbR-4} r={bulbR-7} fill="var(--merc)"/>
+      <rect x={cx-7} y={fillTop} width="14" height={bot-fillTop+4} fill="var(--merc)" style={{transition:"all .35s"}}/>
       {/* 目盛り */}
       {ticks.map((v,i)=>{
         const y=yOf(v);
-        const show = baseLabelVisible(v, stage.scaffold, 0) || arrow===v;
+        const isBig = Math.abs(v % (tickStep>=10?tickStep:tickStep*5))<1e-6 || v===5;
+        const show = labelVisible(v);
         return (
           <g key={i}>
-            <line x1={cx+12} y1={y} x2={cx+24} y2={y} stroke="var(--line)" strokeWidth={v%5===0?3:2}/>
-            {show && <text x={cx+30} y={y+5} fontSize="15" fontWeight="700" fill="var(--ink)">{v}</text>}
+            <line x1={cx+14} y1={y} x2={cx+(isBig?30:24)} y2={y} stroke="var(--line)" strokeWidth={isBig?3:2}/>
+            {show && <text x={cx+36} y={y+6} fontSize="18" fontWeight="700" fill="var(--ink)">{v}</text>}
           </g>
         );
       })}
       {arrow!=null && (
         <g>
-          <path d={`M${cx-30} ${yOf(arrow)} l-14 -8 v16 z`} fill="var(--coral)"/>
-          <text x={cx-50} y={yOf(arrow)+5} textAnchor="end" fontSize="22" fontWeight="900" fill="var(--coral)">?</text>
+          <path d={`M${cx-32} ${yOf(arrow)} l-16 -9 v18 z`} fill="var(--coral)"/>
+          <text x={cx-54} y={yOf(arrow)+7} textAnchor="end" fontSize="26" fontWeight="900" fill="var(--coral)">?</text>
         </g>
       )}
       {marker!=null && !reveal && (
         <g style={{transition:"all .25s"}}>
-          <line x1={cx-26} y1={yOf(marker)} x2={cx-12} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
-          <path d={`M${cx-26} ${yOf(marker)} l-12 -7 v14 z`} fill="var(--coral)"/>
+          <line x1={cx-28} y1={yOf(marker)} x2={cx-14} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
+          <path d={`M${cx-28} ${yOf(marker)} l-13 -8 v16 z`} fill="var(--coral)"/>
         </g>
       )}
       {reveal && answer!=null && (
-        <text x={cx-30} y={yOf(answer)+5} textAnchor="end" fontSize="16" fontWeight="800" fill="var(--mint-dark)">{answer}</text>
+        <text x={cx-32} y={yOf(answer)+6} textAnchor="end" fontSize="19" fontWeight="800" fill="var(--mint-dark)">{answer}</text>
       )}
       {pickable && (
-        <rect x={cx-44} y={top-10} width="88" height={usable+20} fill="transparent" style={{cursor:"pointer"}}
+        <rect x={cx-50} y={top-12} width="100" height={usable+24} fill="transparent" style={{cursor:"pointer"}}
           onPointerDown={(e)=>{
             const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
             const py=(e.clientY-rect.top)/rect.height*H;
-            const val=stage.min + ((bot-py)/usable)*(stage.max-stage.min);
+            const val=min + ((bot-py)/usable)*(max-min);
             const snapped=Math.round(val/stage.step)*stage.step;
-            onPick(Math.min(stage.max,Math.max(stage.min,snapped)));
+            onPick(Math.min(max,Math.max(min,snapped)));
           }}/>
       )}
     </svg>
@@ -328,69 +350,98 @@ function Thermometer({stage, marker, pickable, onPick, answer, reveal, arrow}){
 }
 
 /* ============================================================
-   ビーカー（縦・液量・ズーム対応）
+   ビーカー（平面・正面ビュー・顕微鏡ズーム）
+   全体(min〜max)を常に描画し、zoomでSVGの高さを物理的に拡大。
+   はみ出した分は外側のdivスクロールで見る。
+   目盛りのフェードインは画面上の間隔(px)で判定する。
    ============================================================ */
-function Beaker({stage, zoom, zoomCenter, marker, pickable, onPick, answer, reveal, showAllLabels}){
-  const W=260, H=320, left=70, right=190, top=30, bot=270;
-  const usableH=bot-top, padFrac=0.06;
-  const {ticks, viewMin, viewMax, finest, labelFinest} = computeTicks({
-    min:stage.min,max:stage.max,step:stage.step,baseStep:stage.baseStep,
-    baseDec:1,zoom,zoomCenter,padFrac
+function Beaker({stage, zoom, marker, pickable, onPick, answer, reveal, showAllLabels, scrollRef, onZoomReady}){
+  const W=260, top=30, bot=270;        // zoom=1 のときの基準高さ
+  const left=66, right=194;
+  const baseUsable = bot-top;
+  const usableH = baseUsable * zoom;    // 拡大後の液量域の高さ
+  const H = usableH + 90;               // 上下の余白込み
+  const botZ = top + usableH;           // 拡大後の底のy
+
+  const span = stage.max - stage.min;
+  const yOf=(v)=> botZ - ((v-stage.min)/span)*usableH;
+  const pxGap=(s)=> (s/span)*usableH;   // 刻みsの画面上の高さ(px)
+
+  // 段階的に細かい目盛りを解禁（間隔が開いたら子の刻みを追加）
+  const APPEAR_GAP=70;
+  const levels=[]; let s=stage.baseStep, dec=1;
+  levels.push({s,dec,fade:false});
+  while(s>stage.step+1e-9){
+    if(pxGap(s)>APPEAR_GAP){ const c=Math.round((s/10)*1e6)/1e6; levels.push({s:c,dec:dec+1,fade:true}); s=c; dec=dec+1; }
+    else break;
+  }
+  const ticks=[];
+  levels.forEach((lv,idx)=>{
+    for(let v=stage.min; v<=stage.max+1e-9; v=Math.round((v+lv.s)*1e6)/1e6){
+      const r=Math.round(v*1e6)/1e6;
+      if(idx>0){ const onParent=Math.abs(r/levels[idx-1].s-Math.round(r/levels[idx-1].s))<1e-6; if(onParent)continue; }
+      ticks.push({v:r,s:lv.s,dec:lv.dec,fade:lv.fade,isBase:idx===0});
+    }
   });
-  const yOf=(v)=> bot - ((v-viewMin)/(viewMax-viewMin))*usableH;
-  const fillV = reveal? answer : (marker!=null?marker:viewMin);
-  const fillY = yOf(Math.min(viewMax,Math.max(viewMin,fillV)));
+  const finest=levels[levels.length-1];
+  const labelFinest=pxGap(finest.s)>34;
+
+  const fillV = reveal? answer : (marker!=null?marker:stage.min);
+  const fillY = yOf(Math.min(stage.max,Math.max(stage.min,fillV)));
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:320,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
+    <div ref={scrollRef} style={{maxHeight:zoom>1?420:"none",overflowY:zoom>1?"auto":"visible",
+      overflowX:"hidden",WebkitOverflowScrolling:"touch"}}>
+    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
+         style={{width:"100%",maxWidth:zoom>1?340:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
       <clipPath id="beakerClip"><rect x={left} y={top} width={right-left} height={usableH}/></clipPath>
-      {/* 液 */}
+      {/* 液（平面：水平な水面） */}
       <g clipPath="url(#beakerClip)">
-        <rect x={left} y={fillY} width={right-left} height={bot-fillY+2} fill="var(--glass)" style={{transition:"all .35s"}}/>
-        <ellipse cx={(left+right)/2} cy={fillY} rx={(right-left)/2} ry="6" fill="#a9d6ea" style={{transition:"all .35s"}}/>
+        <rect x={left} y={fillY} width={right-left} height={botZ-fillY+2} fill="var(--glass)" style={{transition:"all .35s"}}/>
+        <rect x={left} y={fillY} width={right-left} height="3" fill="#7fc3e0" style={{transition:"all .35s"}}/>
       </g>
-      {/* 容器 */}
-      <path d={`M${left-6} ${top-8} L${left} ${bot} Q${(left+right)/2} ${bot+14} ${right} ${bot} L${right+6} ${top-8}`}
-        fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round"/>
-      {/* 目盛り */}
+      {/* 容器（平面：左右の壁＋底。口は開いたまま） */}
+      <path d={`M${left} ${top-10} L${left} ${botZ} L${right} ${botZ} L${right} ${top-10}`}
+        fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
+      {/* 目盛り（左壁の内側） */}
       {ticks.map((t,i)=>{
         const y=yOf(t.v);
-        if(y<top-1||y>bot+1) return null;
         const isWhole=Math.abs(t.v-Math.round(t.v))<1e-6;
-        let showLabel=false, labelText="", labelCol="var(--soft)", size=12;
+        let showLabel=false, labelText="", labelCol="var(--soft)", size=14;
         if(t.isBase){
           showLabel = showAllLabels || baseLabelVisible(t.v, stage.scaffold, stage.decimals) || isWhole;
-          labelText=fmt(t.v,1); labelCol=isWhole?"var(--ink)":"var(--soft)"; size=13;
+          labelText=disp(t.v,1); labelCol=isWhole?"var(--ink)":"var(--soft)"; size=15;
         } else if(labelFinest && Math.abs(t.s-finest.s)<1e-9){
-          showLabel=true; labelText=fmt(t.v,t.dec); labelCol="var(--mint-dark)"; size=10;
+          showLabel=true; labelText=disp(t.v,t.dec); labelCol="var(--mint-dark)"; size=12;
         }
         return (
           <g key={i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
-            <line x1={left} y1={y} x2={left+(t.isBase?16:9)} y2={y} stroke={t.isBase?"var(--line)":"var(--mint)"} strokeWidth="2"/>
-            {showLabel && <text x={left-6} y={y+4} textAnchor="end" fontSize={size} fontWeight="700" fill={labelCol}>{labelText}</text>}
+            <line x1={left} y1={y} x2={left+(t.isBase?18:10)} y2={y} stroke={t.isBase?"var(--line)":"var(--mint)"} strokeWidth="2"/>
+            {showLabel && <text x={left-7} y={y+5} textAnchor="end" fontSize={size} fontWeight="700" fill={labelCol}>{labelText}</text>}
           </g>
         );
       })}
-      {marker!=null && !reveal && marker>=viewMin && marker<=viewMax && (
+      {marker!=null && !reveal && (
         <g style={{transition:"all .25s"}}>
-          <line x1={right} y1={yOf(marker)} x2={right+22} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
-          <path d={`M${right} ${yOf(marker)} l12 -7 v14 z`} fill="var(--coral)"/>
+          <line x1={right} y1={yOf(marker)} x2={right+24} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
+          <path d={`M${right} ${yOf(marker)} l13 -8 v16 z`} fill="var(--coral)"/>
         </g>
       )}
-      {reveal && answer!=null && answer>=viewMin && answer<=viewMax && (
-        <text x={right+8} y={yOf(answer)+5} fontSize="15" fontWeight="800" fill="var(--mint-dark)">{fmt(answer,stage.decimals)}</text>
+      {reveal && answer!=null && (
+        <text x={right+9} y={yOf(answer)+6} fontSize="16" fontWeight="800" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
       )}
       {pickable && (
-        <rect x={left-30} y={top-10} width={right-left+60} height={usableH+20} fill="transparent" style={{cursor:"pointer"}}
+        <rect x={left-34} y={top-12} width={right-left+68} height={usableH+24} fill="transparent" style={{cursor:"pointer"}}
           onPointerDown={(e)=>{
             const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
             const py=(e.clientY-rect.top)/rect.height*H;
-            const val=viewMin + ((bot-py)/usableH)*(viewMax-viewMin);
+            const val=stage.min + ((botZ-py)/usableH)*span;
             const snapped=Math.round(val/stage.step)*stage.step;
             onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
           }}/>
       )}
     </svg>
+    </div>
   );
 }
 
@@ -562,15 +613,37 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   const canZoom = stage.zoom;
   const answerStep = stage.step;
   const ansDec = stage.decimals;
+
+  // --- 温度計の問題番号別レンジ（②）---
+  // 1問目:0〜10 全表示 / 2問目:0〜10 5と10のみ / 3問目以降:範囲を段階拡大
+  const isThermo = stage.theme==="thermometer";
+  const thermoSetup = (qno)=>{
+    if(qno===1) return {min:0,max:10,tickStep:1,labelMode:"all"};
+    if(qno===2) return {min:0,max:10,tickStep:1,labelMode:"fivesTens"};
+    if(qno===3) return {min:0,max:20,tickStep:2,labelMode:"scaled"};
+    if(qno===4) return {min:0,max:30,tickStep:5,labelMode:"scaled"};
+    return {min:0,max:50,tickStep:5,labelMode:"scaled"};
+  };
+
+  const [qNo,setQNo] = useState(1);
+
+  // 現在の出題レンジ（温度計は問題番号で変化、他はステージ固定）
+  const range = isThermo ? thermoSetup(qNo) : {min:stage.min,max:stage.max};
+  const thermoTickStep = isThermo ? thermoSetup(qNo).tickStep : 1;
+  const thermoLabelMode = isThermo ? thermoSetup(qNo).labelMode : "all";
+  // target生成・採点に使うレンジ
+  const curMin = range.min, curMax = range.max;
+  // 温度計は目盛り間隔で答える（tickStepが解答精度）
+  const curStep = isThermo ? thermoTickStep : answerStep;
+
   const maxZoom = canZoom ? Math.round((stage.max-stage.min)/(answerStep*8)) : 1;
   const zoomForReveal = canZoom ? Math.max(3,(stage.max-stage.min)/(answerStep*12)) : 1;
 
-  const [target,setTarget] = useState(()=> rnd(stage.min,stage.max,answerStep));
+  const [target,setTarget] = useState(()=> rnd(0,10,1));
   const [zoom,setZoom] = useState(1);
   const [zoomCenter,setZoomCenter] = useState((stage.min+stage.max)/2);
   const [phase,setPhase] = useState("ask");
   const [correct,setCorrect] = useState(null);
-  const [qNo,setQNo] = useState(1);
   const [correctCount,setCorrectCount] = useState(0);
   const [hint,setHint] = useState(false);
   const [stageDone,setStageDone] = useState(false);
@@ -580,6 +653,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   const [choices,setChoices] = useState([]);
 
   const wrapRef = useRef(null);
+  const beakerScrollRef = useRef(null);
   const pointers = useRef(new Map());
   const startDist = useRef(0);
   const startZoom = useRef(1);
@@ -587,19 +661,21 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   // 1問目は数字あり、以降は足場外し（ヒントで一時表示）
   const showAllLabels = (qNo===1) || hint || phase==="result";
 
-  const buildQuestion = (resetNo)=>{
-    const t = rnd(stage.min,stage.max,answerStep);
+  const buildQuestion = (qno)=>{
+    const setup = isThermo ? thermoSetup(qno||qNo) : {min:stage.min,max:stage.max,tickStep:answerStep};
+    const st = isThermo ? setup.tickStep : answerStep;
+    const t = rnd(setup.min, setup.max, st);
     setTarget(t);
     setPhase("ask"); setCorrect(null); setPicked(null); setTyped("");
     setZoom(1); setZoomCenter((stage.min+stage.max)/2); setHint(false);
     if(stage.op==="choose"){
       const opts=new Set([t]);
-      while(opts.size<4){ opts.add(rnd(stage.min,stage.max,answerStep)); }
+      while(opts.size<4){ opts.add(rnd(setup.min,setup.max,st)); }
       setChoices([...opts].sort(()=>Math.random()-0.5));
     }
   };
 
-  useEffect(()=>{ setQNo(1); setCorrectCount(0); setStageDone(false); buildQuestion(); },[stage.id]);
+  useEffect(()=>{ setQNo(1); setCorrectCount(0); setStageDone(false); buildQuestion(1); },[stage.id]);
 
   const nextQuestion=()=>{
     if(qNo>=QUESTIONS_PER_STAGE){
@@ -607,8 +683,9 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       setStageDone(true);
       return;
     }
-    setQNo(n=>n+1);
-    buildQuestion();
+    const nq = qNo+1;
+    setQNo(nq);
+    buildQuestion(nq);
   };
 
   /* ピンチ */
@@ -631,7 +708,20 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       z=Math.min(maxZoom,Math.max(1,z));
       setZoom(z);
       const focus = stage.op==="place" && picked!=null ? picked : target;
-      if(z>1.05) setZoomCenter(focus);
+      if(stage.theme==="beaker"){
+        // 本体ごと拡大：注目点が見える位置へスクロール
+        if(z>1.05){
+          requestAnimationFrame(()=>{
+            const el=beakerScrollRef.current;
+            if(el && el.scrollHeight>el.clientHeight){
+              const frac=1-(focus-stage.min)/(stage.max-stage.min);
+              el.scrollTop=frac*(el.scrollHeight-el.clientHeight);
+            }
+          });
+        }
+      } else {
+        if(z>1.05) setZoomCenter(focus);
+      }
     }
   };
   const onPointerUp=(e)=>{ pointers.current.delete(e.pointerId); };
@@ -639,14 +729,40 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   const zoomBy=(f)=>{
     const z=Math.min(maxZoom,Math.max(1,zoom*f));
     setZoom(z);
-    if(f>1){ setZoomCenter(stage.op==="place"&&picked!=null?picked:target); }
+    const focus = stage.op==="place"&&picked!=null?picked:target;
+    if(f>1){
+      if(stage.theme==="beaker"){
+        requestAnimationFrame(()=>{
+          const el=beakerScrollRef.current;
+          if(el && el.scrollHeight>el.clientHeight){
+            const frac=1-(focus-stage.min)/(stage.max-stage.min);
+            el.scrollTop=frac*(el.scrollHeight-el.clientHeight);
+          }
+        });
+      } else setZoomCenter(focus);
+    }
   };
 
   const judge=(val)=>{
-    const ok=Math.abs(val-target)<answerStep*0.45;
+    const tol = (isThermo ? curStep : answerStep)*0.45;
+    const ok=Math.abs(val-target)<tol;
     setCorrect(ok); setPhase("result"); onResult(ok);
     if(ok) setCorrectCount(c=>c+1);
-    if(canZoom){ setZoomCenter(target); setZoom(z=>Math.max(z,zoomForReveal)); }
+    if(canZoom){
+      setZoom(z=>Math.max(z,zoomForReveal));
+      // ビーカー：拡大表示後、答えの高さへスクロール
+      if(stage.theme==="beaker"){
+        setTimeout(()=>{
+          const el=beakerScrollRef.current;
+          if(el && el.scrollHeight>el.clientHeight){
+            const frac=1-(target-stage.min)/(stage.max-stage.min); // 上が大きい値
+            el.scrollTop = frac*(el.scrollHeight-el.clientHeight);
+          }
+        },60);
+      } else {
+        setZoomCenter(target);
+      }
+    }
   };
   const submitType=()=>{
     const v=parseFloat(typed); if(isNaN(v))return;
@@ -699,7 +815,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       {/* お題 */}
       <div style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"14px 16px",marginBottom:14,boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
         {stage.op==="choose" && <Prompt>↑の<span style={{color:"var(--coral)"}}>矢印</span>の場所はいくつ？</Prompt>}
-        {stage.op==="place" && <Prompt><Big>{fmt(target,ansDec)}{th.unit}</Big> の場所を指でタップしよう</Prompt>}
+        {stage.op==="place" && <Prompt><Big>{disp(target,ansDec)}{th.unit}</Big> の場所を指でタップしよう</Prompt>}
         {stage.op==="type" && <Prompt>↓の<span style={{color:"var(--coral)"}}>矢印</span>の数を入力しよう</Prompt>}
       </div>
 
@@ -734,14 +850,14 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
         style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"10px 6px",marginBottom:14,
           touchAction:canZoom?"none":"auto",overflow:"hidden",boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
         {stage.theme==="thermometer" && (
-          <Thermometer stage={stage}
+          <Thermometer stage={stage} range={range} labelMode={thermoLabelMode} tickStep={thermoTickStep}
             arrow={stage.op==="choose"||stage.op==="type"?target:null}
             marker={stage.op==="place"?picked:null}
             pickable={stage.op==="place"&&phase==="ask"}
             onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
         )}
         {stage.theme==="beaker" && (
-          <Beaker stage={stage} zoom={zoom} zoomCenter={zoomCenter} showAllLabels={showAllLabels}
+          <Beaker stage={stage} zoom={zoom} showAllLabels={showAllLabels} scrollRef={beakerScrollRef}
             marker={stage.op==="place"?picked:null}
             pickable={stage.op==="place"&&phase==="ask"}
             onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
@@ -759,14 +875,14 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       {stage.op==="choose" && phase==="ask" && (
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
           {choices.map((c,i)=>(
-            <button key={i} onClick={()=>{setPicked(c);judge(c);}} style={choiceBtn}>{fmt(c,ansDec)}{th.unit}</button>
+            <button key={i} onClick={()=>{setPicked(c);judge(c);}} style={choiceBtn}>{disp(c,ansDec)}{th.unit}</button>
           ))}
         </div>
       )}
       {stage.op==="place" && phase==="ask" && (
         <div style={{textAlign:"center"}}>
           <div style={{fontSize:13,color:"var(--soft)",marginBottom:8}}>
-            えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?fmt(picked,ansDec)+th.unit:"—"}</b></div>
+            えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?disp(picked,ansDec)+th.unit:"—"}</b></div>
           <button disabled={picked==null} onClick={()=>judge(picked)} style={{...primaryBtn,opacity:picked==null?.4:1}}>これにきめる！</button>
         </div>
       )}
@@ -827,10 +943,10 @@ function Result({correct,target,picked,decimals,unit,streak,isLast,onNext,onHome
         <div style={{fontSize:22,fontWeight:900,color:correct?"var(--mint-dark)":"var(--coral)"}}>
           {correct?"せいかい！":"おしい！"}</div>
         {!correct && <div style={{marginTop:6,fontSize:15}}>
-          きみのこたえ <b>{isNaN(picked)?"—":fmt(picked,decimals)+unit}</b> /
-          ただしくは <b style={{color:"var(--mint-dark)"}}>{fmt(target,decimals)+unit}</b></div>}
+          きみのこたえ <b>{isNaN(picked)?"—":disp(picked,decimals)+unit}</b> /
+          ただしくは <b style={{color:"var(--mint-dark)"}}>{disp(target,decimals)+unit}</b></div>}
         {!correct && diff!=null && <div style={{marginTop:4,fontSize:13,color:"var(--coral)",fontWeight:700}}>
-          あと {fmt(diff,decimals)}{unit} ずれていたよ</div>}
+          あと {disp(diff,decimals)}{unit} ずれていたよ</div>}
         {correct && <div style={{marginTop:4,fontSize:14,color:"var(--line)"}}>れんぞく {streak} 問せいかい！</div>}
         {milestone && correct && <div style={{marginTop:10,fontSize:15,fontWeight:800}}>{milestone.emoji} 「{milestone.label}」バッジゲット！</div>}
       </div>
