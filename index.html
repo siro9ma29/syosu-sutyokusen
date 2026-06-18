@@ -48,6 +48,8 @@
 <script type="text/babel">
 const { useState, useRef, useEffect, useCallback } = React;
 
+const APP_VERSION = "v1.1";
+
 /* ============================================================
    ステージ定義（6ステージ・一本道進行）
    theme: thermometer | ruler | beaker | abstract
@@ -351,21 +353,34 @@ function Thermometer({stage, range, labelMode, tickStep, marker, pickable, onPic
 
 /* ============================================================
    ビーカー（平面・正面ビュー・顕微鏡ズーム）
-   全体(min〜max)を常に描画し、zoomでSVGの高さを物理的に拡大。
-   はみ出した分は外側のdivスクロールで見る。
+   枠の大きさは固定（H一定）。zoomは「液量域の内部だけ」を縦に拡大し、
+   注目点(focus)が枠の中央に来るようにviewBoxを移動して見せる。
+   → 画面全体ではなく、ビーカー枠の中だけが拡大される。
    目盛りのフェードインは画面上の間隔(px)で判定する。
    ============================================================ */
-function Beaker({stage, zoom, marker, pickable, onPick, answer, reveal, showAllLabels, scrollRef, onZoomReady}){
-  const W=260, top=30, bot=270;        // zoom=1 のときの基準高さ
+function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, showAllLabels}){
+  const W=260, top=30, bot=270;        // 枠（常に固定）
   const left=66, right=194;
-  const baseUsable = bot-top;
-  const usableH = baseUsable * zoom;    // 拡大後の液量域の高さ
-  const H = usableH + 90;               // 上下の余白込み
-  const botZ = top + usableH;           // 拡大後の底のy
-
+  const baseUsable = bot-top;          // zoom=1 のときの液量域の高さ
+  const H = bot + 50;                  // SVGの高さ（常に固定）
   const span = stage.max - stage.min;
-  const yOf=(v)=> botZ - ((v-stage.min)/span)*usableH;
-  const pxGap=(s)=> (s/span)*usableH;   // 刻みsの画面上の高さ(px)
+
+  // 拡大時、液量域(top〜bot)の中で zoom 倍に引き伸ばす。
+  // focus（注目している値）が常に枠の中央に来るように原点をずらす。
+  const usableH = baseUsable * zoom;            // 引き伸ばした内部の高さ
+  const centerV = focus==null ? (stage.min+stage.max)/2 : focus;
+  const frameMidY = (top+bot)/2;                // 枠の縦中央
+  // 値→「拡大した内部座標系」での仮想y（底=botZv, 上=topZv）
+  const yFull=(v)=> (top+usableH) - ((v-stage.min)/span)*usableH;
+  // centerV が frameMidY に来るようにオフセット
+  let offset = frameMidY - yFull(centerV);
+  // 端で内部がはみ出さないようにクランプ
+  const topZv0 = yFull(stage.max) + offset;     // 拡大内部の上端
+  const botZv0 = yFull(stage.min) + offset;     // 拡大内部の下端
+  if(topZv0 > top) offset += (top - topZv0);
+  if(botZv0 < bot) offset += (bot - botZv0);
+  const yOf=(v)=> yFull(v) + offset;
+  const pxGap=(s)=> (s/span)*usableH;           // 刻みsの画面上の高さ(px)
 
   // 段階的に細かい目盛りを解禁（間隔が開いたら子の刻みを追加）
   const APPEAR_GAP=70;
@@ -388,24 +403,27 @@ function Beaker({stage, zoom, marker, pickable, onPick, answer, reveal, showAllL
 
   const fillV = reveal? answer : (marker!=null?marker:stage.min);
   const fillY = yOf(Math.min(stage.max,Math.max(stage.min,fillV)));
+  // 枠内に見えているものだけ描く判定
+  const inFrame=(y)=> y>=top-2 && y<=bot+2;
 
   return (
-    <div ref={scrollRef} style={{maxHeight:zoom>1?420:"none",overflowY:zoom>1?"auto":"visible",
-      overflowX:"hidden",WebkitOverflowScrolling:"touch"}}>
-    <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H}
-         style={{width:"100%",maxWidth:zoom>1?340:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
-      <clipPath id="beakerClip"><rect x={left} y={top} width={right-left} height={usableH}/></clipPath>
-      {/* 液（平面：水平な水面） */}
-      <g clipPath="url(#beakerClip)">
-        <rect x={left} y={fillY} width={right-left} height={botZ-fillY+2} fill="var(--glass)" style={{transition:"all .35s"}}/>
-        <rect x={left} y={fillY} width={right-left} height="3" fill="#7fc3e0" style={{transition:"all .35s"}}/>
+    <svg viewBox={`0 0 ${W} ${H}`}
+         style={{width:"100%",maxWidth:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none",touchAction:"none"}}>
+      <clipPath id="beakerClip"><rect x={left} y={top} width={right-left} height={bot-top}/></clipPath>
+      <clipPath id="beakerTickClip"><rect x={0} y={top} width={W} height={bot-top}/></clipPath>
+      {/* 液（平面：水平な水面）。枠でクリップ */}
+      <g clipPath="url(#beakerClip)" style={{transition:"all .25s"}}>
+        <rect x={left} y={fillY} width={right-left} height={(bot+200)-fillY} fill="var(--glass)" style={{transition:"all .25s"}}/>
+        <rect x={left} y={fillY} width={right-left} height="3" fill="#7fc3e0" style={{transition:"all .25s"}}/>
       </g>
-      {/* 容器（平面：左右の壁＋底。口は開いたまま） */}
-      <path d={`M${left} ${top-10} L${left} ${botZ} L${right} ${botZ} L${right} ${top-10}`}
+      {/* 容器（枠は固定） */}
+      <path d={`M${left} ${top-10} L${left} ${bot} L${right} ${bot} L${right} ${top-10}`}
         fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"/>
-      {/* 目盛り（左壁の内側） */}
+      {/* 目盛り（左壁の内側）。枠でクリップして外には出さない */}
+      <g clipPath="url(#beakerTickClip)">
       {ticks.map((t,i)=>{
         const y=yOf(t.v);
+        if(!inFrame(y)) return null;
         const isWhole=Math.abs(t.v-Math.round(t.v))<1e-6;
         let showLabel=false, labelText="", labelCol="var(--soft)", size=14;
         if(t.isBase){
@@ -421,27 +439,30 @@ function Beaker({stage, zoom, marker, pickable, onPick, answer, reveal, showAllL
           </g>
         );
       })}
-      {marker!=null && !reveal && (
+      {marker!=null && !reveal && inFrame(yOf(marker)) && (
         <g style={{transition:"all .25s"}}>
           <line x1={right} y1={yOf(marker)} x2={right+24} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
           <path d={`M${right} ${yOf(marker)} l13 -8 v16 z`} fill="var(--coral)"/>
         </g>
       )}
-      {reveal && answer!=null && (
+      {reveal && answer!=null && inFrame(yOf(answer)) && (
         <text x={right+9} y={yOf(answer)+6} fontSize="16" fontWeight="800" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
       )}
+      </g>
       {pickable && (
-        <rect x={left-34} y={top-12} width={right-left+68} height={usableH+24} fill="transparent" style={{cursor:"pointer"}}
+        <rect x={left-34} y={top} width={right-left+68} height={bot-top} fill="transparent" style={{cursor:"pointer"}}
           onPointerDown={(e)=>{
+            if(e.currentTarget.ownerSVGElement.dataset.pinching==="1") return; // ピンチ中はタップ無効
             const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
             const py=(e.clientY-rect.top)/rect.height*H;
-            const val=stage.min + ((botZ-py)/usableH)*span;
+            // 画面y → 内部仮想y → 値
+            const yv = py - offset;
+            const val = stage.min + ((top+usableH - yv)/usableH)*span;
             const snapped=Math.round(val/stage.step)*stage.step;
             onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
           }}/>
       )}
     </svg>
-    </div>
   );
 }
 
@@ -456,10 +477,7 @@ function App(){
 
   useEffect(()=>{ writeSave(save); },[save]);
 
-  const isUnlocked = (id)=>{
-    if(id===1) return true;
-    return save.stages[id-1]?.cleared;
-  };
+  const isUnlocked = (id)=>true; // 全ステージ最初から選択可
 
   const start=(id)=>{ if(!isUnlocked(id))return; setStageId(id); setScreen("play"); setStreak(0); };
 
@@ -517,7 +535,11 @@ function App(){
 function Header({streak,bestStreak}){
   return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-      <span style={{fontSize:24,fontWeight:800,letterSpacing:"-.5px"}}>小数・数直線マスター</span>
+      <span style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:24,fontWeight:800,letterSpacing:"-.5px"}}>小数・数直線マスター</span>
+        <span style={{fontSize:11,fontWeight:800,color:"#fff",background:"var(--mint-dark)",
+          borderRadius:8,padding:"2px 8px",letterSpacing:".3px"}}>{APP_VERSION}</span>
+      </span>
       <div style={{display:"flex",gap:8}}>
         <Pill label="れんぞく" value={streak} color="var(--coral)"/>
         <Pill label="さいこう" value={bestStreak} color="var(--mint-dark)"/>
@@ -540,9 +562,9 @@ function Home({save,isUnlocked,onStart,onReset}){
   return (
     <div>
       <div style={{background:"var(--sky)",borderRadius:18,padding:"14px 16px",marginBottom:18,border:"2px solid var(--grid)"}}>
-        <div style={{fontWeight:800,marginBottom:4}}>ステージをじゅんばんにクリアしよう</div>
+        <div style={{fontWeight:800,marginBottom:4}}>すきなステージをえらんでチャレンジ！</div>
         <div style={{fontSize:13,color:"var(--line)"}}>
-          1ステージ <b>5問</b>。<b>4問いじょう</b>せいかいでクリア！ つぎのステージがひらくよ。
+          1ステージ <b>5問</b>。<b>4問いじょう</b>せいかいでクリア！ ぜんステージ いつでもあそべるよ。
           ビーカーと数直線では <b>2本の指でひろげる（ピンチ）</b> とかくれた目もりが出てくる。
         </div>
       </div>
@@ -653,7 +675,6 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   const [choices,setChoices] = useState([]);
 
   const wrapRef = useRef(null);
-  const beakerScrollRef = useRef(null);
   const pointers = useRef(new Map());
   const startDist = useRef(0);
   const startZoom = useRef(1);
@@ -708,20 +729,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       z=Math.min(maxZoom,Math.max(1,z));
       setZoom(z);
       const focus = stage.op==="place" && picked!=null ? picked : target;
-      if(stage.theme==="beaker"){
-        // 本体ごと拡大：注目点が見える位置へスクロール
-        if(z>1.05){
-          requestAnimationFrame(()=>{
-            const el=beakerScrollRef.current;
-            if(el && el.scrollHeight>el.clientHeight){
-              const frac=1-(focus-stage.min)/(stage.max-stage.min);
-              el.scrollTop=frac*(el.scrollHeight-el.clientHeight);
-            }
-          });
-        }
-      } else {
-        if(z>1.05) setZoomCenter(focus);
-      }
+      if(z>1.05) setZoomCenter(focus);
     }
   };
   const onPointerUp=(e)=>{ pointers.current.delete(e.pointerId); };
@@ -730,17 +738,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
     const z=Math.min(maxZoom,Math.max(1,zoom*f));
     setZoom(z);
     const focus = stage.op==="place"&&picked!=null?picked:target;
-    if(f>1){
-      if(stage.theme==="beaker"){
-        requestAnimationFrame(()=>{
-          const el=beakerScrollRef.current;
-          if(el && el.scrollHeight>el.clientHeight){
-            const frac=1-(focus-stage.min)/(stage.max-stage.min);
-            el.scrollTop=frac*(el.scrollHeight-el.clientHeight);
-          }
-        });
-      } else setZoomCenter(focus);
-    }
+    if(f>1) setZoomCenter(focus);
   };
 
   const judge=(val)=>{
@@ -750,18 +748,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
     if(ok) setCorrectCount(c=>c+1);
     if(canZoom){
       setZoom(z=>Math.max(z,zoomForReveal));
-      // ビーカー：拡大表示後、答えの高さへスクロール
-      if(stage.theme==="beaker"){
-        setTimeout(()=>{
-          const el=beakerScrollRef.current;
-          if(el && el.scrollHeight>el.clientHeight){
-            const frac=1-(target-stage.min)/(stage.max-stage.min); // 上が大きい値
-            el.scrollTop = frac*(el.scrollHeight-el.clientHeight);
-          }
-        },60);
-      } else {
-        setZoomCenter(target);
-      }
+      setZoomCenter(target);
     }
   };
   const submitType=()=>{
@@ -857,7 +844,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
             onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
         )}
         {stage.theme==="beaker" && (
-          <Beaker stage={stage} zoom={zoom} showAllLabels={showAllLabels} scrollRef={beakerScrollRef}
+          <Beaker stage={stage} zoom={zoom} focus={zoomCenter} showAllLabels={showAllLabels}
             marker={stage.op==="place"?picked:null}
             pickable={stage.op==="place"&&phase==="ask"}
             onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
