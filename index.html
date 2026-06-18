@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>小数・数直線マスター</title>
+<style>
+  :root{
+    --ink:#1f3a4d;
+    --paper:#fbf7ee;
+    --line:#2c5f7c;
+    --mint:#3fb98f;
+    --mint-dark:#2a8e6b;
+    --coral:#ef7d5a;
+    --sun:#f4c33d;
+    --sky:#dceef5;
+    --grid:#c4d8e0;
+    --soft:#8aa4b1;
+    --lock:#b9c6cd;
+    --glass:#bfe0ef;
+    --merc:#e25b4a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    background:
+      radial-gradient(circle at 15% 10%, #fffdf7 0%, transparent 45%),
+      radial-gradient(circle at 85% 85%, #eef8f3 0%, transparent 50%),
+      var(--paper);
+    color:var(--ink);
+    overflow-x:hidden;
+    touch-action:manipulation;
+  }
+  #root{max-width:860px;margin:0 auto;padding:18px 16px 60px;}
+  .reduced * { transition:none !important; animation:none !important; }
+  @keyframes pop{0%{transform:scale(.6);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
+  @keyframes fillup{from{transform:scaleY(0);}to{transform:scaleY(1);}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useRef, useEffect, useCallback } = React;
+
+/* ============================================================
+   ステージ定義（6ステージ・一本道進行）
+   theme: thermometer | ruler | beaker | abstract
+   op:    choose | place | type
+   scaffold: full | half | whole  （足場外しの最終形）
+   ============================================================ */
+const STAGES = [
+  { id:1, theme:"thermometer", name:"温度計①", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"choose", scaffold:"full",  zoom:false,
+    desc:"0〜10℃ / 1めもり 1 / えらぶ" },
+  { id:2, theme:"thermometer", name:"温度計②", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"place",  scaffold:"half",  zoom:false,
+    desc:"0〜10℃ / 1めもり 1 / あわせる" },
+  { id:3, theme:"ruler",       name:"定規①",   min:0, max:3,  step:0.1,  decimals:1, baseStep:0.1, op:"choose", scaffold:"half",  zoom:false,
+    desc:"0〜3cm / 1めもり 0.1 / えらぶ・あわせる" },
+  { id:4, theme:"ruler",       name:"定規②",   min:0, max:3,  step:0.1,  decimals:1, baseStep:0.1, op:"type",   scaffold:"whole", zoom:false,
+    desc:"0〜3cm / 1めもり 0.1 / かく" },
+  { id:5, theme:"beaker",      name:"ビーカー", min:0, max:1,  step:0.01, decimals:2, baseStep:0.1, op:"place",  scaffold:"half",  zoom:true,
+    desc:"0〜1L / ピンチで0.01が出現 / あわせる" },
+  { id:6, theme:"abstract",    name:"数直線",   min:0, max:1,  step:0.001,decimals:3, baseStep:0.1, op:"type",   scaffold:"whole", zoom:true,
+    desc:"0〜1 / ピンチで0.001まで / かく" },
+];
+
+const OP_INFO = {
+  choose:{emoji:"👀", label:"えらぶ"},
+  place: {emoji:"👆", label:"あわせる"},
+  type:  {emoji:"⌨️", label:"かく"},
+};
+const THEME_INFO = {
+  thermometer:{emoji:"🌡️", label:"温度計", unit:"℃"},
+  ruler:      {emoji:"📏", label:"定規",   unit:"cm"},
+  beaker:     {emoji:"⚗️", label:"ビーカー", unit:"L"},
+  abstract:   {emoji:"📈", label:"数直線", unit:""},
+};
+
+const QUESTIONS_PER_STAGE = 5;
+
+const fmt = (v,d)=> v.toFixed(d);
+const rnd = (min,max,step)=>{
+  const n = Math.round((max-min)/step);
+  const i = 1 + Math.floor(Math.random()*(n-1)); // 端を避ける
+  return Math.round((min + i*step)*1000)/1000;
+};
+
+/* ============================================================
+   バッジ
+   ============================================================ */
+const BADGES = [
+  {streak:3,  emoji:"🌱", label:"めばえ"},
+  {streak:5,  emoji:"⭐", label:"きらめき"},
+  {streak:8,  emoji:"🔥", label:"あつい"},
+  {streak:12, emoji:"👑", label:"マスター"},
+];
+
+/* ============================================================
+   保存（localStorage）
+   ============================================================ */
+const SAVE_KEY = "shousuu_master_v2";
+const blankSave = ()=>{
+  const stages = {};
+  STAGES.forEach(s=> stages[s.id] = {cleared:false, best:0, plays:0, correct:0, total:0});
+  return { stages, bestStreak:0, earned:[] };
+};
+const loadSave = ()=>{
+  try{
+    const raw = localStorage.getItem(SAVE_KEY);
+    if(!raw) return blankSave();
+    const data = JSON.parse(raw);
+    const base = blankSave();
+    base.bestStreak = data.bestStreak||0;
+    base.earned = Array.isArray(data.earned)? data.earned:[];
+    if(data.stages){
+      STAGES.forEach(s=>{ if(data.stages[s.id]) base.stages[s.id] = {...base.stages[s.id], ...data.stages[s.id]}; });
+    }
+    return base;
+  }catch(e){ return blankSave(); }
+};
+const writeSave = (data)=>{
+  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(data)); }catch(e){}
+};
+
+/* ============================================================
+   目盛り計算（ズーム＆フェードイン対応）
+   ============================================================ */
+function computeTicks({min,max,step,baseStep,baseDec,zoom,zoomCenter,padFrac}){
+  const span = max - min;
+  const viewSpan = span / zoom;
+  let viewMin = zoomCenter - viewSpan/2;
+  let viewMax = zoomCenter + viewSpan/2;
+  if(viewMin < min){ viewMin = min; viewMax = min + viewSpan; }
+  if(viewMax > max){ viewMax = max; viewMin = max - viewSpan; }
+  const usableFrac = 1 - padFrac*2;
+  const pxGap = (s)=> 1000 * usableFrac * (s/(viewMax-viewMin)); // 仮想1000px基準
+
+  const APPEAR_GAP = 110;
+  const levels = [];
+  let s = baseStep, dec = baseDec;
+  levels.push({s, dec, fade:false});
+  while(s > step + 1e-9){
+    const parentGap = pxGap(s);
+    const childS = Math.round((s/10)*1e6)/1e6;
+    if(parentGap > APPEAR_GAP){
+      levels.push({s:childS, dec:dec+1, fade:true});
+      s = childS; dec = dec+1;
+    } else break;
+  }
+
+  const ticks = [];
+  levels.forEach((lv, idx)=>{
+    for(let v=min; v<=max+1e-9; v=Math.round((v+lv.s)*1e6)/1e6){
+      const r = Math.round(v*1e6)/1e6;
+      if(r<viewMin-1e-9 || r>viewMax+1e-9) continue;
+      if(idx>0){
+        const onParent = Math.abs(r/levels[idx-1].s - Math.round(r/levels[idx-1].s))<1e-6;
+        if(onParent) continue;
+      }
+      ticks.push({v:r, s:lv.s, dec:lv.dec, fade:lv.fade, isBase:idx===0});
+    }
+  });
+
+  const finest = levels[levels.length-1];
+  const finestGap = pxGap(finest.s);
+  return { ticks, viewMin, viewMax, finest, labelFinest: finestGap>60 };
+}
+
+/* ============================================================
+   足場外し：このベース目盛りに数字を出すか
+   scaffold: full=全部 / half=区切り(0.5,整数)のみ / whole=整数のみ
+   ============================================================ */
+function baseLabelVisible(v, scaffold, decimals){
+  const isWhole = Math.abs(v-Math.round(v))<1e-6;
+  if(scaffold==="full") return true;
+  if(scaffold==="whole") return isWhole;
+  // half: 整数 or .5
+  const half = Math.abs((v*2)-Math.round(v*2))<1e-6;
+  return half;
+}
+
+/* ============================================================
+   横向き数直線（定規・抽象用）
+   ============================================================ */
+function NumberLine({stage, zoom, zoomCenter, showAllLabels, arrow, marker, pickable, onPick, answer, reveal}){
+  const W = 720, H = 150, padL = 44, padR = 44;
+  const lineY = 86;
+  const usable = W - padL - padR;
+  const padFrac = padL / W;
+
+  const {ticks, viewMin, viewMax, finest, labelFinest} = computeTicks({
+    min:stage.min, max:stage.max, step:stage.step, baseStep:stage.baseStep,
+    baseDec: stage.baseStep<1?1:0, zoom, zoomCenter, padFrac
+  });
+
+  const xOf = (val)=> padL + ((val - viewMin)/(viewMax - viewMin))*usable;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block",userSelect:"none"}}>
+      <line x1={padL} y1={lineY} x2={W-padR} y2={lineY} stroke="var(--line)" strokeWidth="3" strokeLinecap="round"/>
+      <path d={`M${W-padR} ${lineY} l-12 -6 v12 z`} fill="var(--line)"/>
+
+      {ticks.map((t,i)=>{
+        const x = xOf(t.v);
+        const isEnd = Math.abs(t.v-stage.min)<1e-9 || Math.abs(t.v-stage.max)<1e-9;
+        const isWhole = Math.abs(t.v-Math.round(t.v))<1e-6;
+        const big = t.isBase && (stage.decimals===0 || isWhole);
+        const half = t.isBase ? (big?16:12) : 8;
+        const col = t.isBase ? "var(--line)" : "var(--mint)";
+
+        let showLabel=false, labelText="", labelCol="var(--soft)", labelSize=13, fy=lineY+38;
+        if(t.isBase){
+          const allowed = isEnd || showAllLabels || baseLabelVisible(t.v, stage.scaffold, stage.decimals);
+          showLabel = allowed;
+          labelText = fmt(t.v, stage.baseStep<1?1:0);
+          labelCol = (stage.decimals===0||isWhole) ? "var(--ink)" : "var(--soft)";
+          labelSize = big?17:13;
+        } else if(labelFinest && Math.abs(t.s-finest.s)<1e-9){
+          showLabel=true; labelText=fmt(t.v,t.dec); labelCol="var(--mint-dark)"; labelSize=11; fy=lineY+30;
+        }
+        return (
+          <g key={"tk"+i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
+            <line x1={x} y1={lineY-half} x2={x} y2={lineY+half} stroke={col} strokeWidth={t.isBase?(big?3:2):2}/>
+            {showLabel && <text x={x} y={fy} textAnchor="middle" fontSize={labelSize}
+              fontWeight={big?"700":(t.isBase?"500":"600")} fill={labelCol}>{labelText}</text>}
+          </g>
+        );
+      })}
+
+      {arrow!=null && arrow>=viewMin && arrow<=viewMax && (
+        <g>
+          <text x={xOf(arrow)} y={lineY-50} textAnchor="middle" fontSize="20" fontWeight="900" fill="var(--coral)">?</text>
+          <line x1={xOf(arrow)} y1={lineY-44} x2={xOf(arrow)} y2={lineY-5} stroke="var(--coral)" strokeWidth="4" strokeLinecap="round"/>
+          <path d={`M${xOf(arrow)} ${lineY-2} l-8 -13 h16 z`} fill="var(--coral)"/>
+        </g>
+      )}
+
+      {marker!=null && marker>=viewMin && marker<=viewMax && (
+        <g style={{transition:"all .25s"}}>
+          <line x1={xOf(marker)} y1={lineY-30} x2={xOf(marker)} y2={lineY+30} stroke="var(--coral)" strokeWidth="3"/>
+          <path d={`M${xOf(marker)} ${lineY-30} l-9 -14 h18 z`} fill="var(--coral)"/>
+        </g>
+      )}
+
+      {reveal && answer!=null && answer>=viewMin && answer<=viewMax && (
+        <g>
+          <line x1={xOf(answer)} y1={lineY-34} x2={xOf(answer)} y2={lineY+34} stroke="var(--mint-dark)" strokeWidth="3" strokeDasharray="5 4"/>
+          <text x={xOf(answer)} y={lineY-42} textAnchor="middle" fontSize="15" fontWeight="700" fill="var(--mint-dark)">{fmt(answer,stage.decimals)}</text>
+        </g>
+      )}
+
+      {pickable && (
+        <rect x={padL-10} y={lineY-40} width={usable+20} height="80" fill="transparent" style={{cursor:"pointer"}}
+          onPointerDown={(e)=>{
+            const rect = e.currentTarget.ownerSVGElement.getBoundingClientRect();
+            const px = (e.clientX-rect.left)/rect.width*W;
+            const val = viewMin + ((px-padL)/usable)*(viewMax-viewMin);
+            const snapped = Math.round(val/stage.step)*stage.step;
+            onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
+          }}/>
+      )}
+    </svg>
+  );
+}
+
+/* ============================================================
+   温度計（縦・整数）
+   ============================================================ */
+function Thermometer({stage, marker, pickable, onPick, answer, reveal, arrow}){
+  const W=200, H=300, cx=70, top=24, bot=240, bulbR=22;
+  const usable = bot-top;
+  const yOf=(v)=> bot - ((v-stage.min)/(stage.max-stage.min))*usable;
+  const ticks=[];
+  for(let v=stage.min; v<=stage.max+1e-9; v++){ ticks.push(v); }
+  const fillV = reveal ? answer : (marker!=null?marker:stage.min);
+  const fillTop = yOf(fillV);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
+      <rect x={cx-12} y={top-6} width="24" height={usable+12} rx="12" fill="#fff" stroke="var(--line)" strokeWidth="3"/>
+      <circle cx={cx} cy={bot+bulbR-4} r={bulbR} fill="#fff" stroke="var(--line)" strokeWidth="3"/>
+      {/* 水銀 */}
+      <circle cx={cx} cy={bot+bulbR-4} r={bulbR-6} fill="var(--merc)"/>
+      <rect x={cx-6} y={fillTop} width="12" height={bot-fillTop+4} fill="var(--merc)" style={{transition:"all .35s"}}/>
+      {/* 目盛り */}
+      {ticks.map((v,i)=>{
+        const y=yOf(v);
+        const show = baseLabelVisible(v, stage.scaffold, 0) || arrow===v;
+        return (
+          <g key={i}>
+            <line x1={cx+12} y1={y} x2={cx+24} y2={y} stroke="var(--line)" strokeWidth={v%5===0?3:2}/>
+            {show && <text x={cx+30} y={y+5} fontSize="15" fontWeight="700" fill="var(--ink)">{v}</text>}
+          </g>
+        );
+      })}
+      {arrow!=null && (
+        <g>
+          <path d={`M${cx-30} ${yOf(arrow)} l-14 -8 v16 z`} fill="var(--coral)"/>
+          <text x={cx-50} y={yOf(arrow)+5} textAnchor="end" fontSize="22" fontWeight="900" fill="var(--coral)">?</text>
+        </g>
+      )}
+      {marker!=null && !reveal && (
+        <g style={{transition:"all .25s"}}>
+          <line x1={cx-26} y1={yOf(marker)} x2={cx-12} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
+          <path d={`M${cx-26} ${yOf(marker)} l-12 -7 v14 z`} fill="var(--coral)"/>
+        </g>
+      )}
+      {reveal && answer!=null && (
+        <text x={cx-30} y={yOf(answer)+5} textAnchor="end" fontSize="16" fontWeight="800" fill="var(--mint-dark)">{answer}</text>
+      )}
+      {pickable && (
+        <rect x={cx-44} y={top-10} width="88" height={usable+20} fill="transparent" style={{cursor:"pointer"}}
+          onPointerDown={(e)=>{
+            const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
+            const py=(e.clientY-rect.top)/rect.height*H;
+            const val=stage.min + ((bot-py)/usable)*(stage.max-stage.min);
+            const snapped=Math.round(val/stage.step)*stage.step;
+            onPick(Math.min(stage.max,Math.max(stage.min,snapped)));
+          }}/>
+      )}
+    </svg>
+  );
+}
+
+/* ============================================================
+   ビーカー（縦・液量・ズーム対応）
+   ============================================================ */
+function Beaker({stage, zoom, zoomCenter, marker, pickable, onPick, answer, reveal, showAllLabels}){
+  const W=260, H=320, left=70, right=190, top=30, bot=270;
+  const usableH=bot-top, padFrac=0.06;
+  const {ticks, viewMin, viewMax, finest, labelFinest} = computeTicks({
+    min:stage.min,max:stage.max,step:stage.step,baseStep:stage.baseStep,
+    baseDec:1,zoom,zoomCenter,padFrac
+  });
+  const yOf=(v)=> bot - ((v-viewMin)/(viewMax-viewMin))*usableH;
+  const fillV = reveal? answer : (marker!=null?marker:viewMin);
+  const fillY = yOf(Math.min(viewMax,Math.max(viewMin,fillV)));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:320,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
+      <clipPath id="beakerClip"><rect x={left} y={top} width={right-left} height={usableH}/></clipPath>
+      {/* 液 */}
+      <g clipPath="url(#beakerClip)">
+        <rect x={left} y={fillY} width={right-left} height={bot-fillY+2} fill="var(--glass)" style={{transition:"all .35s"}}/>
+        <ellipse cx={(left+right)/2} cy={fillY} rx={(right-left)/2} ry="6" fill="#a9d6ea" style={{transition:"all .35s"}}/>
+      </g>
+      {/* 容器 */}
+      <path d={`M${left-6} ${top-8} L${left} ${bot} Q${(left+right)/2} ${bot+14} ${right} ${bot} L${right+6} ${top-8}`}
+        fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round"/>
+      {/* 目盛り */}
+      {ticks.map((t,i)=>{
+        const y=yOf(t.v);
+        if(y<top-1||y>bot+1) return null;
+        const isWhole=Math.abs(t.v-Math.round(t.v))<1e-6;
+        let showLabel=false, labelText="", labelCol="var(--soft)", size=12;
+        if(t.isBase){
+          showLabel = showAllLabels || baseLabelVisible(t.v, stage.scaffold, stage.decimals) || isWhole;
+          labelText=fmt(t.v,1); labelCol=isWhole?"var(--ink)":"var(--soft)"; size=13;
+        } else if(labelFinest && Math.abs(t.s-finest.s)<1e-9){
+          showLabel=true; labelText=fmt(t.v,t.dec); labelCol="var(--mint-dark)"; size=10;
+        }
+        return (
+          <g key={i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
+            <line x1={left} y1={y} x2={left+(t.isBase?16:9)} y2={y} stroke={t.isBase?"var(--line)":"var(--mint)"} strokeWidth="2"/>
+            {showLabel && <text x={left-6} y={y+4} textAnchor="end" fontSize={size} fontWeight="700" fill={labelCol}>{labelText}</text>}
+          </g>
+        );
+      })}
+      {marker!=null && !reveal && marker>=viewMin && marker<=viewMax && (
+        <g style={{transition:"all .25s"}}>
+          <line x1={right} y1={yOf(marker)} x2={right+22} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
+          <path d={`M${right} ${yOf(marker)} l12 -7 v14 z`} fill="var(--coral)"/>
+        </g>
+      )}
+      {reveal && answer!=null && answer>=viewMin && answer<=viewMax && (
+        <text x={right+8} y={yOf(answer)+5} fontSize="15" fontWeight="800" fill="var(--mint-dark)">{fmt(answer,stage.decimals)}</text>
+      )}
+      {pickable && (
+        <rect x={left-30} y={top-10} width={right-left+60} height={usableH+20} fill="transparent" style={{cursor:"pointer"}}
+          onPointerDown={(e)=>{
+            const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
+            const py=(e.clientY-rect.top)/rect.height*H;
+            const val=viewMin + ((bot-py)/usableH)*(viewMax-viewMin);
+            const snapped=Math.round(val/stage.step)*stage.step;
+            onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
+          }}/>
+      )}
+    </svg>
+  );
+}
+
+/* ============================================================
+   アプリ本体
+   ============================================================ */
+function App(){
+  const [screen,setScreen] = useState("home");
+  const [stageId,setStageId] = useState(1);
+  const [save,setSave] = useState(loadSave);
+  const [streak,setStreak] = useState(0);
+
+  useEffect(()=>{ writeSave(save); },[save]);
+
+  const isUnlocked = (id)=>{
+    if(id===1) return true;
+    return save.stages[id-1]?.cleared;
+  };
+
+  const start=(id)=>{ if(!isUnlocked(id))return; setStageId(id); setScreen("play"); setStreak(0); };
+
+  const logResult=(ok)=>{
+    setSave(prev=>{
+      const c = JSON.parse(JSON.stringify(prev));
+      const st = c.stages[stageId];
+      st.total++; if(ok) st.correct++;
+      return c;
+    });
+    if(ok){
+      setStreak(s=>{
+        const ns=s+1;
+        setSave(prev=>{
+          const c=JSON.parse(JSON.stringify(prev));
+          c.bestStreak=Math.max(c.bestStreak,ns);
+          BADGES.forEach(b=>{ if(ns===b.streak && !c.earned.includes(b.label)) c.earned.push(b.label); });
+          return c;
+        });
+        return ns;
+      });
+    }else{ setStreak(0); }
+  };
+
+  const finishStage=(correctCount)=>{
+    setSave(prev=>{
+      const c=JSON.parse(JSON.stringify(prev));
+      const st=c.stages[stageId];
+      st.plays++;
+      st.best=Math.max(st.best,correctCount);
+      if(correctCount>=QUESTIONS_PER_STAGE-1) st.cleared=true; // 5問中4問以上でクリア
+      return c;
+    });
+  };
+
+  const resetAll=()=>{
+    if(confirm("学習記録とバッジをすべて消します。よろしいですか？")){
+      const b=blankSave(); setSave(b); writeSave(b); setStreak(0);
+    }
+  };
+
+  return (
+    <div>
+      <Header streak={streak} bestStreak={save.bestStreak}/>
+      {screen==="home"
+        ? <Home save={save} isUnlocked={isUnlocked} onStart={start} onReset={resetAll}/>
+        : <Play stage={STAGES.find(s=>s.id===stageId)} onResult={logResult}
+                streak={streak} onHome={()=>setScreen("home")} onFinish={finishStage}
+                nextStage={isUnlocked(stageId+1)||save.stages[stageId]?.cleared ? STAGES.find(s=>s.id===stageId+1):null}
+                onNextStage={start}/>}
+    </div>
+  );
+}
+
+function Header({streak,bestStreak}){
+  return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+      <span style={{fontSize:24,fontWeight:800,letterSpacing:"-.5px"}}>小数・数直線マスター</span>
+      <div style={{display:"flex",gap:8}}>
+        <Pill label="れんぞく" value={streak} color="var(--coral)"/>
+        <Pill label="さいこう" value={bestStreak} color="var(--mint-dark)"/>
+      </div>
+    </div>
+  );
+}
+function Pill({label,value,color}){
+  return (
+    <div style={{background:"#fff",border:`2px solid ${color}`,borderRadius:14,
+      padding:"5px 12px",textAlign:"center",minWidth:62,boxShadow:"0 2px 0 rgba(0,0,0,.04)"}}>
+      <div style={{fontSize:10,color:"var(--soft)",fontWeight:700}}>{label}</div>
+      <div style={{fontSize:20,fontWeight:800,color}}>{value}</div>
+    </div>
+  );
+}
+
+/* ---------------- ホーム（ステージマップ） ---------------- */
+function Home({save,isUnlocked,onStart,onReset}){
+  return (
+    <div>
+      <div style={{background:"var(--sky)",borderRadius:18,padding:"14px 16px",marginBottom:18,border:"2px solid var(--grid)"}}>
+        <div style={{fontWeight:800,marginBottom:4}}>ステージをじゅんばんにクリアしよう</div>
+        <div style={{fontSize:13,color:"var(--line)"}}>
+          1ステージ <b>5問</b>。<b>4問いじょう</b>せいかいでクリア！ つぎのステージがひらくよ。
+          ビーカーと数直線では <b>2本の指でひろげる（ピンチ）</b> とかくれた目もりが出てくる。
+        </div>
+      </div>
+
+      <div style={{display:"grid",gap:12}}>
+        {STAGES.map((s,idx)=>{
+          const rec=save.stages[s.id];
+          const unlocked=isUnlocked(s.id);
+          const acc = rec.total? Math.round(rec.correct/rec.total*100):null;
+          const th=THEME_INFO[s.theme], op=OP_INFO[s.op];
+          return (
+            <button key={s.id} disabled={!unlocked} onClick={()=>onStart(s.id)}
+              style={{textAlign:"left",cursor:unlocked?"pointer":"not-allowed",
+                border:`2px solid ${rec.cleared?"var(--mint)":(unlocked?"var(--grid)":"#e3e9ec")}`,
+                background: unlocked?"#fff":"#f4f6f7", borderRadius:16, padding:"12px 14px",
+                opacity:unlocked?1:.6, transition:"transform .12s",
+                boxShadow: unlocked?"0 3px 0 rgba(0,0,0,.05)":"none",
+                display:"flex",alignItems:"center",gap:14}}
+              onMouseDown={e=>{if(unlocked)e.currentTarget.style.transform="translateY(2px)";}}
+              onMouseUp={e=>e.currentTarget.style.transform=""}
+              onMouseLeave={e=>e.currentTarget.style.transform=""}>
+              <div style={{fontSize:34,minWidth:44,textAlign:"center"}}>{unlocked?th.emoji:"🔒"}</div>
+              <div style={{flex:1}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2,flexWrap:"wrap"}}>
+                  <span style={{background:rec.cleared?"var(--mint)":"var(--ink)",color:"#fff",fontWeight:800,
+                    borderRadius:9,padding:"2px 9px",fontSize:13}}>STAGE {s.id}</span>
+                  <span style={{fontWeight:800,fontSize:15}}>{s.name}</span>
+                  <span style={{fontSize:12,color:"var(--soft)"}}>{op.emoji}{op.label}</span>
+                  {rec.cleared && <span style={{fontSize:13,color:"var(--mint-dark)",fontWeight:800}}>クリア✓</span>}
+                </div>
+                <div style={{fontSize:11.5,color:"var(--soft)",lineHeight:1.4}}>{s.desc}</div>
+                {acc!=null && unlocked && <div style={{fontSize:11,marginTop:4,color:"var(--mint-dark)",fontWeight:700}}>
+                  さいこう {rec.best}/{QUESTIONS_PER_STAGE}・せいかいりつ {acc}%</div>}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{marginTop:24}}>
+        <div style={{fontWeight:800,marginBottom:8}}>あつめたバッジ</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          {BADGES.map(b=>{
+            const got=save.earned.includes(b.label);
+            return (
+              <div key={b.label} style={{textAlign:"center",opacity:got?1:.32,filter:got?"none":"grayscale(1)",transition:"all .3s"}}>
+                <div style={{fontSize:34}}>{b.emoji}</div>
+                <div style={{fontSize:11,fontWeight:700}}>{b.label}</div>
+                <div style={{fontSize:10,color:"var(--soft)"}}>{b.streak}れんぞく</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{marginTop:26,textAlign:"center"}}>
+        <button onClick={onReset} style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:12,
+          padding:"8px 16px",fontWeight:700,cursor:"pointer",color:"var(--soft)",fontSize:12}}>
+          学習記録をリセット
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- プレイ ---------------- */
+function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
+  const canZoom = stage.zoom;
+  const answerStep = stage.step;
+  const ansDec = stage.decimals;
+  const maxZoom = canZoom ? Math.round((stage.max-stage.min)/(answerStep*8)) : 1;
+  const zoomForReveal = canZoom ? Math.max(3,(stage.max-stage.min)/(answerStep*12)) : 1;
+
+  const [target,setTarget] = useState(()=> rnd(stage.min,stage.max,answerStep));
+  const [zoom,setZoom] = useState(1);
+  const [zoomCenter,setZoomCenter] = useState((stage.min+stage.max)/2);
+  const [phase,setPhase] = useState("ask");
+  const [correct,setCorrect] = useState(null);
+  const [qNo,setQNo] = useState(1);
+  const [correctCount,setCorrectCount] = useState(0);
+  const [hint,setHint] = useState(false);
+  const [stageDone,setStageDone] = useState(false);
+
+  const [picked,setPicked] = useState(null);
+  const [typed,setTyped] = useState("");
+  const [choices,setChoices] = useState([]);
+
+  const wrapRef = useRef(null);
+  const pointers = useRef(new Map());
+  const startDist = useRef(0);
+  const startZoom = useRef(1);
+
+  // 1問目は数字あり、以降は足場外し（ヒントで一時表示）
+  const showAllLabels = (qNo===1) || hint || phase==="result";
+
+  const buildQuestion = (resetNo)=>{
+    const t = rnd(stage.min,stage.max,answerStep);
+    setTarget(t);
+    setPhase("ask"); setCorrect(null); setPicked(null); setTyped("");
+    setZoom(1); setZoomCenter((stage.min+stage.max)/2); setHint(false);
+    if(stage.op==="choose"){
+      const opts=new Set([t]);
+      while(opts.size<4){ opts.add(rnd(stage.min,stage.max,answerStep)); }
+      setChoices([...opts].sort(()=>Math.random()-0.5));
+    }
+  };
+
+  useEffect(()=>{ setQNo(1); setCorrectCount(0); setStageDone(false); buildQuestion(); },[stage.id]);
+
+  const nextQuestion=()=>{
+    if(qNo>=QUESTIONS_PER_STAGE){
+      onFinish(correctCount);
+      setStageDone(true);
+      return;
+    }
+    setQNo(n=>n+1);
+    buildQuestion();
+  };
+
+  /* ピンチ */
+  const onPointerDown=(e)=>{
+    if(!canZoom)return;
+    pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.current.size===2){
+      const pts=[...pointers.current.values()];
+      startDist.current=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      startZoom.current=zoom;
+    }
+  };
+  const onPointerMove=(e)=>{
+    if(!canZoom||!pointers.current.has(e.pointerId))return;
+    pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pointers.current.size===2){
+      const pts=[...pointers.current.values()];
+      const dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
+      let z=startZoom.current*(dist/startDist.current);
+      z=Math.min(maxZoom,Math.max(1,z));
+      setZoom(z);
+      const focus = stage.op==="place" && picked!=null ? picked : target;
+      if(z>1.05) setZoomCenter(focus);
+    }
+  };
+  const onPointerUp=(e)=>{ pointers.current.delete(e.pointerId); };
+
+  const zoomBy=(f)=>{
+    const z=Math.min(maxZoom,Math.max(1,zoom*f));
+    setZoom(z);
+    if(f>1){ setZoomCenter(stage.op==="place"&&picked!=null?picked:target); }
+  };
+
+  const judge=(val)=>{
+    const ok=Math.abs(val-target)<answerStep*0.45;
+    setCorrect(ok); setPhase("result"); onResult(ok);
+    if(ok) setCorrectCount(c=>c+1);
+    if(canZoom){ setZoomCenter(target); setZoom(z=>Math.max(z,zoomForReveal)); }
+  };
+  const submitType=()=>{
+    const v=parseFloat(typed); if(isNaN(v))return;
+    judge(Math.round(v*1e6)/1e6);
+  };
+
+  const th=THEME_INFO[stage.theme];
+
+  // ステージ完了画面
+  if(stageDone){
+    const cleared = correctCount>=QUESTIONS_PER_STAGE-1;
+    return (
+      <div style={{textAlign:"center",marginTop:10}}>
+        <div style={{background:cleared?"#e8f7f0":"#fff7e8",border:`2px solid ${cleared?"var(--mint)":"var(--sun)"}`,
+          borderRadius:20,padding:"26px 18px",marginBottom:16,animation:"pop .4s ease"}}>
+          <div style={{fontSize:54}}>{cleared?"🏆":"🎯"}</div>
+          <div style={{fontSize:24,fontWeight:900,color:cleared?"var(--mint-dark)":"var(--ink)"}}>
+            {cleared?"ステージクリア！":"あと少し！"}</div>
+          <div style={{fontSize:18,fontWeight:800,marginTop:8}}>
+            {QUESTIONS_PER_STAGE}問中 <span style={{color:"var(--coral)",fontSize:26}}>{correctCount}</span>問せいかい</div>
+          {!cleared && <div style={{fontSize:13,color:"var(--soft)",marginTop:6}}>4問せいかいでつぎのステージがひらくよ</div>}
+          {cleared && nextStage && <div style={{fontSize:13,color:"var(--mint-dark)",marginTop:6,fontWeight:700}}>
+            つぎは「{nextStage.name}」がプレイできる！</div>}
+        </div>
+        <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
+          <button onClick={()=>{setQNo(1);setCorrectCount(0);setStageDone(false);buildQuestion();}} style={navBtn}>もういちど</button>
+          {cleared && nextStage && <button onClick={()=>onNextStage(nextStage.id)} style={primaryBtn}>つぎのステージ →</button>}
+          <button onClick={onHome} style={navBtn}>ステージ選択へ</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+        <button onClick={onHome} style={navBtn}>← もどる</button>
+        <div style={{fontWeight:800}}>{th.emoji}{stage.name}</div>
+        <div style={{fontSize:13,fontWeight:800,color:"var(--soft)"}}>{qNo}/{QUESTIONS_PER_STAGE}問</div>
+      </div>
+
+      {/* 進捗ドット */}
+      <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:12}}>
+        {Array.from({length:QUESTIONS_PER_STAGE}).map((_,i)=>(
+          <div key={i} style={{width:i+1===qNo?14:10,height:10,borderRadius:6,
+            background:i<qNo-1?"var(--mint)":(i+1===qNo?"var(--coral)":"var(--grid)"),transition:"all .2s"}}/>
+        ))}
+      </div>
+
+      {/* お題 */}
+      <div style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"14px 16px",marginBottom:14,boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
+        {stage.op==="choose" && <Prompt>↑の<span style={{color:"var(--coral)"}}>矢印</span>の場所はいくつ？</Prompt>}
+        {stage.op==="place" && <Prompt><Big>{fmt(target,ansDec)}{th.unit}</Big> の場所を指でタップしよう</Prompt>}
+        {stage.op==="type" && <Prompt>↓の<span style={{color:"var(--coral)"}}>矢印</span>の数を入力しよう</Prompt>}
+      </div>
+
+      {/* ヒント */}
+      {phase==="ask" && qNo>1 && (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,fontSize:12.5,color:"var(--soft)"}}>
+          <span>{showAllLabels?"数字が見えています":"目もりの数字はかくれています"}</span>
+          <button onClick={()=>setHint(h=>!h)}
+            style={{background:hint?"var(--sun)":"#fff",border:"2px solid var(--sun)",borderRadius:12,
+              padding:"6px 14px",fontWeight:800,cursor:"pointer",color:"var(--ink)",fontSize:13}}>
+            💡 ヒント{hint?"をかくす":"（数字を見る）"}
+          </button>
+        </div>
+      )}
+
+      {/* ズーム案内 */}
+      {canZoom && phase==="ask" && (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--sky)",
+          border:"2px dashed var(--mint)",borderRadius:12,padding:"7px 12px",marginBottom:10,fontSize:12.5,color:"var(--line)"}}>
+          <span>🔍 2本指でひろげるとかくれた目もりが出るよ
+            {stage.id===6 && "（もっとひろげると0.001まで！）"}（×{zoom.toFixed(1)}）</span>
+          <span style={{display:"flex",gap:6}}>
+            <button onClick={()=>zoomBy(1.8)} style={miniBtn}>＋</button>
+            <button onClick={()=>zoomBy(1/1.8)} style={miniBtn}>－</button>
+          </span>
+        </div>
+      )}
+
+      {/* 描画エリア */}
+      <div ref={wrapRef}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
+        style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"10px 6px",marginBottom:14,
+          touchAction:canZoom?"none":"auto",overflow:"hidden",boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
+        {stage.theme==="thermometer" && (
+          <Thermometer stage={stage}
+            arrow={stage.op==="choose"||stage.op==="type"?target:null}
+            marker={stage.op==="place"?picked:null}
+            pickable={stage.op==="place"&&phase==="ask"}
+            onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
+        )}
+        {stage.theme==="beaker" && (
+          <Beaker stage={stage} zoom={zoom} zoomCenter={zoomCenter} showAllLabels={showAllLabels}
+            marker={stage.op==="place"?picked:null}
+            pickable={stage.op==="place"&&phase==="ask"}
+            onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
+        )}
+        {(stage.theme==="ruler"||stage.theme==="abstract") && (
+          <NumberLine stage={stage} zoom={zoom} zoomCenter={zoomCenter} showAllLabels={showAllLabels}
+            arrow={stage.op==="choose"||stage.op==="type"?target:null}
+            marker={stage.op==="place"?picked:null}
+            pickable={stage.op==="place"&&phase==="ask"}
+            onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
+        )}
+      </div>
+
+      {/* 操作エリア */}
+      {stage.op==="choose" && phase==="ask" && (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
+          {choices.map((c,i)=>(
+            <button key={i} onClick={()=>{setPicked(c);judge(c);}} style={choiceBtn}>{fmt(c,ansDec)}{th.unit}</button>
+          ))}
+        </div>
+      )}
+      {stage.op==="place" && phase==="ask" && (
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:13,color:"var(--soft)",marginBottom:8}}>
+            えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?fmt(picked,ansDec)+th.unit:"—"}</b></div>
+          <button disabled={picked==null} onClick={()=>judge(picked)} style={{...primaryBtn,opacity:picked==null?.4:1}}>これにきめる！</button>
+        </div>
+      )}
+      {stage.op==="type" && phase==="ask" && (
+        <Tenkey value={typed} setValue={setTyped} onSubmit={submitType} decimals={ansDec}/>
+      )}
+
+      {phase==="result" && (
+        <Result correct={correct} target={target}
+          picked={stage.op==="type"?parseFloat(typed):picked}
+          decimals={ansDec} unit={th.unit} streak={streak}
+          isLast={qNo>=QUESTIONS_PER_STAGE} onNext={nextQuestion} onHome={onHome}/>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- パーツ ---------------- */
+const Prompt=({children})=> <div style={{fontSize:16,fontWeight:700,lineHeight:1.5}}>{children}</div>;
+const Big=({children})=> <span style={{fontSize:28,fontWeight:900,color:"var(--coral)",margin:"0 4px",letterSpacing:"-.5px"}}>{children}</span>;
+
+const navBtn={background:"#fff",border:"2px solid var(--grid)",borderRadius:12,padding:"6px 12px",fontWeight:800,cursor:"pointer",color:"var(--ink)",fontSize:13};
+const miniBtn={background:"#fff",border:"2px solid var(--mint)",borderRadius:8,width:30,height:28,fontWeight:900,cursor:"pointer",color:"var(--mint-dark)",fontSize:16,lineHeight:1};
+const choiceBtn={background:"#fff",border:"2px solid var(--line)",borderRadius:14,padding:"16px 0",fontSize:22,fontWeight:900,cursor:"pointer",color:"var(--ink)",boxShadow:"0 4px 0 rgba(0,0,0,.06)",transition:"transform .1s"};
+const primaryBtn={background:"var(--mint)",border:"none",borderRadius:14,padding:"13px 28px",fontSize:18,fontWeight:900,cursor:"pointer",color:"#fff",boxShadow:"0 4px 0 var(--mint-dark)"};
+
+function Tenkey({value,setValue,onSubmit,decimals}){
+  const keys=["1","2","3","4","5","6","7","8","9",".","0","←"];
+  const tap=(k)=>{
+    if(k==="←") setValue(v=>v.slice(0,-1));
+    else if(k==="."){ if(!value.includes(".")&&value!=="") setValue(v=>v+"."); }
+    else setValue(v=> v.length<6 ? v+k : v);
+  };
+  return (
+    <div style={{maxWidth:300,margin:"0 auto"}}>
+      <div style={{background:"#fff",border:"2px solid var(--line)",borderRadius:12,padding:"12px",textAlign:"center",
+        fontSize:30,fontWeight:900,marginBottom:10,minHeight:54,color:"var(--ink)"}}>
+        {value||<span style={{color:"var(--soft)"}}>{(0).toFixed(decimals)}</span>}</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
+        {keys.map(k=>(
+          <button key={k} onClick={()=>tap(k)} style={{padding:"15px 0",fontSize:22,fontWeight:800,borderRadius:12,
+            border:"2px solid var(--grid)",background:"#fff",cursor:"pointer",color:"var(--ink)"}}>{k}</button>
+        ))}
+      </div>
+      <button onClick={onSubmit} disabled={value===""} style={{...primaryBtn,width:"100%",opacity:value===""?.4:1}}>こたえあわせ</button>
+    </div>
+  );
+}
+
+function Result({correct,target,picked,decimals,unit,streak,isLast,onNext,onHome}){
+  const milestone=BADGES.find(b=>b.streak===streak);
+  const diff = (!correct && !isNaN(picked)) ? Math.abs(Math.round((target-picked)*1e6)/1e6) : null;
+  return (
+    <div style={{textAlign:"center",marginTop:6}}>
+      <div style={{background:correct?"#e8f7f0":"#fdeee9",border:`2px solid ${correct?"var(--mint)":"var(--coral)"}`,
+        borderRadius:18,padding:"18px 16px",marginBottom:14,animation:"pop .35s ease"}}>
+        <div style={{fontSize:46}}>{correct?"🎉":"💪"}</div>
+        <div style={{fontSize:22,fontWeight:900,color:correct?"var(--mint-dark)":"var(--coral)"}}>
+          {correct?"せいかい！":"おしい！"}</div>
+        {!correct && <div style={{marginTop:6,fontSize:15}}>
+          きみのこたえ <b>{isNaN(picked)?"—":fmt(picked,decimals)+unit}</b> /
+          ただしくは <b style={{color:"var(--mint-dark)"}}>{fmt(target,decimals)+unit}</b></div>}
+        {!correct && diff!=null && <div style={{marginTop:4,fontSize:13,color:"var(--coral)",fontWeight:700}}>
+          あと {fmt(diff,decimals)}{unit} ずれていたよ</div>}
+        {correct && <div style={{marginTop:4,fontSize:14,color:"var(--line)"}}>れんぞく {streak} 問せいかい！</div>}
+        {milestone && correct && <div style={{marginTop:10,fontSize:15,fontWeight:800}}>{milestone.emoji} 「{milestone.label}」バッジゲット！</div>}
+      </div>
+      <button onClick={onNext} style={primaryBtn}>{isLast?"けっかを見る →":"つぎの問題 →"}</button>
+    </div>
+  );
+}
+
+if(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches){
+  document.body.classList.add("reduced");
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
