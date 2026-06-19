@@ -21,8 +21,10 @@
     --merc:#e25b4a;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-  html{height:100%;}
-  body{margin:0;padding:0;min-height:100%;}
+  html,body{height:100%;}
+  /* 画面の高さに収める。dvh対応ブラウザではアドレスバー分も考慮される */
+  html{height:100dvh;}
+  body{margin:0;padding:0;height:100dvh;overflow:hidden;}
   body{
     font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
     background:
@@ -30,27 +32,34 @@
       radial-gradient(circle at 85% 85%, #eef8f3 0%, transparent 50%),
       var(--paper);
     color:var(--ink);
-    overflow-x:hidden;
-    overflow-y:auto;
     -webkit-overflow-scrolling:touch;
     touch-action:manipulation;
   }
-  #root{max-width:920px;margin:0 auto;padding:20px 18px 64px;}
-  /* タブレット横画面など、縦が低い画面で全体が収まるよう調整 */
+  /* rootは画面いっぱいの縦フレックス。中身がはみ出す時だけここがスクロール */
+  #root{
+    max-width:920px;margin:0 auto;padding:14px 18px;
+    height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+  }
+  /* ホーム画面はリスト主体なので、root内でスクロールできるようにする */
+  .home-screen{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  /* プレイ画面は1画面に収める縦フレックス。描画エリアだけが伸縮する */
+  .play-screen{flex:1;min-height:0;display:flex;flex-direction:column;}
+  /* 描画エリア以外は中身の高さを保ち、描画エリア(play-stage)だけが残りを伸縮 */
+  .play-screen > div:not(.play-stage){flex-shrink:0;}
+  .play-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  /* 縦長(温度計・ビーカー): 高さ基準で枠内に収める */
+  .play-stage.tall svg{max-height:100%;width:auto;max-width:100%;}
+  /* 横長(数直線・定規): 幅基準。高さはautoで自然に決まる(潰さない) */
+  .play-stage.wide{align-items:center;}
+  .play-stage.wide svg{width:100%;height:auto;}
+  /* せまい画面で各ブロックの余白を自動的に詰める */
+  @media (max-height:680px){
+    #root{padding:8px 14px;}
+    .play-screen > div{margin-bottom:8px !important;}
+  }
   @media (max-height:560px){
-    #root{padding:10px 16px 40px;}
-    #root svg{max-height:46vh;}
-    .play-area{display:flex;flex-direction:column;}
-  }
-  @media (orientation:landscape) and (max-height:600px){
-    #root{padding:8px 16px 20px;}
-    #root svg{max-height:40vh;}
-    /* 余白を詰めてすべての要素を画面内に収める */
-    .play-screen > div{margin-bottom:6px !important;}
-  }
-  @media (orientation:landscape) and (max-height:480px){
-    #root svg{max-height:33vh;}
-    .play-screen > div{margin-bottom:4px !important;}
+    #root{padding:6px 12px;}
+    .play-screen > div{margin-bottom:5px !important;}
   }
   .reduced * { transition:none !important; animation:none !important; }
   @keyframes pop{0%{transform:scale(.6);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
@@ -67,7 +76,7 @@
 <script type="text/babel">
 const { useState, useRef, useEffect, useCallback } = React;
 
-const APP_VERSION = "v1.5";
+const APP_VERSION = "v1.7";
 
 /* ============================================================
    ステージ定義（6ステージ・一本道進行）
@@ -406,7 +415,8 @@ function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, s
   const fTop  = bot - baseUsable*vis;                 // 上へ伸びる
   const fRight = left + (right-left)*vis;             // 右へ伸びる
   const usableFrame = bot - fTop;                     // 拡大後の枠の高さ
-  // 拡大したビーカーが上に伸びても切れないよう、viewBoxの上端に余白をとる
+  // 拡大したビーカーが上に伸びても切れないよう、viewBoxの上端を実際の拡大状態に追従させる。
+  // （最大拡大で固定すると通常時に無駄な縦余白が出て画面からはみ出すため）
   const vbTop = Math.min(0, fTop - 16);
   const vbH = H - vbTop;
 
@@ -570,7 +580,7 @@ function App(){
   };
 
   return (
-    <div>
+    <div style={{display:"flex",flexDirection:"column",height:"100%",minHeight:0}}>
       <Header streak={streak} bestStreak={save.bestStreak}/>
       {screen==="home"
         ? <Home save={save} isUnlocked={isUnlocked} onStart={start} onReset={resetAll}/>
@@ -584,7 +594,7 @@ function App(){
 
 function Header({streak,bestStreak}){
   return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexShrink:0}}>
       <span style={{display:"flex",alignItems:"center",gap:8}}>
         <span style={{fontSize:24,fontWeight:800,letterSpacing:"-.5px"}}>小数・数直線マスター</span>
         <span style={{fontSize:11,fontWeight:800,color:"#fff",background:"var(--mint-dark)",
@@ -610,7 +620,7 @@ function Pill({label,value,color}){
 /* ---------------- ホーム（ステージマップ） ---------------- */
 function Home({save,isUnlocked,onStart,onReset}){
   return (
-    <div>
+    <div className="home-screen">
       <div style={{background:"var(--sky)",borderRadius:18,padding:"14px 16px",marginBottom:18,border:"2px solid var(--grid)"}}>
         <div style={{fontWeight:800,marginBottom:4}}>すきなステージをえらんでチャレンジ！</div>
         <div style={{fontSize:13,color:"var(--line)"}}>
@@ -869,7 +879,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
   if(stageDone){
     const cleared = correctCount>=QUESTIONS_PER_STAGE-1;
     return (
-      <div style={{textAlign:"center",marginTop:10}}>
+      <div className="home-screen" style={{textAlign:"center",marginTop:10}}>
         <div style={{background:cleared?"#e8f7f0":"#fff7e8",border:`2px solid ${cleared?"var(--mint)":"var(--sun)"}`,
           borderRadius:20,padding:"26px 18px",marginBottom:16,animation:"pop .4s ease"}}>
           <div style={{fontSize:54}}>{cleared?"🏆":"🎯"}</div>
@@ -892,18 +902,15 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
 
   return (
     <div className="play-screen">
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:10}}>
         <button onClick={onHome} style={navBtn}>← もどる</button>
-        <div style={{fontWeight:800}}>{th.emoji}{stage.name}</div>
-        <div style={{fontSize:13,fontWeight:800,color:"var(--soft)"}}>{qNo}/{QUESTIONS_PER_STAGE}問</div>
-      </div>
-
-      {/* 進捗ドット */}
-      <div style={{display:"flex",gap:6,justifyContent:"center",marginBottom:12}}>
-        {Array.from({length:QUESTIONS_PER_STAGE}).map((_,i)=>(
-          <div key={i} style={{width:i+1===qNo?14:10,height:10,borderRadius:6,
-            background:i<qNo-1?"var(--mint)":(i+1===qNo?"var(--coral)":"var(--grid)"),transition:"all .2s"}}/>
-        ))}
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"center"}}>
+          {Array.from({length:QUESTIONS_PER_STAGE}).map((_,i)=>(
+            <div key={i} style={{width:i+1===qNo?14:10,height:10,borderRadius:6,
+              background:i<qNo-1?"var(--mint)":(i+1===qNo?"var(--coral)":"var(--grid)"),transition:"all .2s"}}/>
+          ))}
+        </div>
+        <div style={{fontWeight:800,whiteSpace:"nowrap",fontSize:14}}>{th.emoji}{stage.name} <span style={{color:"var(--soft)",fontWeight:800}}>{qNo}/{QUESTIONS_PER_STAGE}</span></div>
       </div>
 
       {/* お題 */}
@@ -943,6 +950,7 @@ function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
       {/* 描画エリア */}
       <div ref={wrapRef}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
+        className={"play-stage"+(stage.theme==="thermometer"||stage.theme==="beaker"?" tall":" wide")}
         style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"10px 6px",marginBottom:14,
           touchAction:canZoom?"none":"auto",overflow:"hidden",boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
         {stage.theme==="thermometer" && (
@@ -1008,24 +1016,36 @@ const choiceBtn={background:"#fff",border:"2px solid var(--line)",borderRadius:1
 const primaryBtn={background:"var(--mint)",border:"none",borderRadius:14,padding:"13px 28px",fontSize:18,fontWeight:900,cursor:"pointer",color:"#fff",boxShadow:"0 4px 0 var(--mint-dark)"};
 
 function Tenkey({value,setValue,onSubmit,decimals}){
-  const keys=["1","2","3","4","5","6","7","8","9",".","0","←"];
   const tap=(k)=>{
     if(k==="←") setValue(v=>v.slice(0,-1));
     else if(k==="."){ if(!value.includes(".")&&value!=="") setValue(v=>v+"."); }
     else setValue(v=> v.length<6 ? v+k : v);
   };
+  const keyBtn={padding:"12px 0",fontSize:20,fontWeight:800,borderRadius:12,
+    border:"2px solid var(--grid)",background:"#fff",cursor:"pointer",color:"var(--ink)"};
   return (
-    <div style={{maxWidth:300,margin:"0 auto"}}>
-      <div style={{background:"#fff",border:"2px solid var(--line)",borderRadius:12,padding:"12px",textAlign:"center",
-        fontSize:30,fontWeight:900,marginBottom:10,minHeight:54,color:"var(--ink)"}}>
-        {value||<span style={{color:"var(--soft)"}}>{(0).toFixed(decimals)}</span>}</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:10}}>
-        {keys.map(k=>(
-          <button key={k} onClick={()=>tap(k)} style={{padding:"15px 0",fontSize:22,fontWeight:800,borderRadius:12,
-            border:"2px solid var(--grid)",background:"#fff",cursor:"pointer",color:"var(--ink)"}}>{k}</button>
-        ))}
+    <div style={{display:"flex",gap:12,maxWidth:560,margin:"0 auto",alignItems:"stretch",
+      flexWrap:"wrap",justifyContent:"center"}}>
+      {/* 左：数字キー 1-9 と 0 */}
+      <div style={{flex:"1 1 200px",maxWidth:260}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+          {["1","2","3","4","5","6","7","8","9"].map(k=>(
+            <button key={k} onClick={()=>tap(k)} style={keyBtn}>{k}</button>
+          ))}
+          <button onClick={()=>tap(".")} style={keyBtn}>.</button>
+          <button onClick={()=>tap("0")} style={keyBtn}>0</button>
+          <button onClick={()=>tap("←")} style={{...keyBtn,color:"var(--coral)"}}>←</button>
+        </div>
       </div>
-      <button onClick={onSubmit} disabled={value===""} style={{...primaryBtn,width:"100%",opacity:value===""?.4:1}}>こたえあわせ</button>
+      {/* 右：入力表示＋こたえあわせ（縦に積むが幅を取って全体の高さを抑える） */}
+      <div style={{flex:"1 1 180px",maxWidth:240,display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{flex:1,background:"#fff",border:"2px solid var(--line)",borderRadius:12,
+          padding:"12px",textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",
+          fontSize:30,fontWeight:900,minHeight:60,color:"var(--ink)"}}>
+          {value||<span style={{color:"var(--soft)"}}>{(0).toFixed(decimals)}</span>}</div>
+        <button onClick={onSubmit} disabled={value===""}
+          style={{...primaryBtn,width:"100%",opacity:value===""?.4:1}}>こたえあわせ</button>
+      </div>
     </div>
   );
 }
