@@ -49,9 +49,14 @@
   .play-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
   /* 縦長(温度計・ビーカー): 高さ基準で枠内に収める */
   .play-stage.tall svg{max-height:100%;width:auto;max-width:100%;}
-  /* 横長(数直線・定規): 幅基準。高さはautoで自然に決まる(潰さない) */
+  /* 横長(数直線・定規): 画面が低いと幅100%では縦があふれて下のラベルが切れる。
+     高さを主制約(max-height)にし、足りる時だけ幅100%まで広げる。比率は保つ。 */
   .play-stage.wide{align-items:center;}
-  .play-stage.wide svg{width:100%;height:auto;}
+  .play-stage.wide svg{max-width:100%;max-height:100%;width:100%;height:auto;}
+  /* 高さが低い横画面では、幅100%だと縦があふれるので高さ基準に切替 */
+  @media (orientation:landscape){
+    .play-stage.wide svg{width:auto;height:100%;max-width:100%;}
+  }
   /* せまい画面で各ブロックの余白を自動的に詰める */
   @media (max-height:680px){
     #root{padding:8px 14px;}
@@ -1021,30 +1026,27 @@ function Tenkey({value,setValue,onSubmit,decimals}){
     else if(k==="."){ if(!value.includes(".")&&value!=="") setValue(v=>v+"."); }
     else setValue(v=> v.length<6 ? v+k : v);
   };
-  const keyBtn={padding:"12px 0",fontSize:20,fontWeight:800,borderRadius:12,
+  const keyBtn={padding:"14px 0",fontSize:20,fontWeight:800,borderRadius:12,
     border:"2px solid var(--grid)",background:"#fff",cursor:"pointer",color:"var(--ink)"};
   return (
-    <div style={{display:"flex",gap:12,maxWidth:560,margin:"0 auto",alignItems:"stretch",
-      flexWrap:"wrap",justifyContent:"center"}}>
-      {/* 左：数字キー 1-9 と 0 */}
-      <div style={{flex:"1 1 200px",maxWidth:260}}>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-          {["1","2","3","4","5","6","7","8","9"].map(k=>(
+    <div style={{maxWidth:640,margin:"0 auto"}}>
+      {/* 入力表示欄 */}
+      <div style={{background:"#fff",border:"2px solid var(--line)",borderRadius:12,
+        padding:"10px",textAlign:"center",fontSize:28,fontWeight:900,minHeight:50,marginBottom:10,
+        display:"flex",alignItems:"center",justifyContent:"center",color:"var(--ink)"}}>
+        {value||<span style={{color:"var(--soft)"}}>{(0).toFixed(decimals)}</span>}</div>
+      {/* キー：横長に2段(上1-5 / 下6-0)＋操作キーを並べる */}
+      <div style={{display:"flex",gap:10,alignItems:"stretch",flexWrap:"wrap"}}>
+        <div style={{flex:"1 1 280px",display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
+          {["1","2","3","4","5","6","7","8","9","0"].map(k=>(
             <button key={k} onClick={()=>tap(k)} style={keyBtn}>{k}</button>
           ))}
           <button onClick={()=>tap(".")} style={keyBtn}>.</button>
-          <button onClick={()=>tap("0")} style={keyBtn}>0</button>
           <button onClick={()=>tap("←")} style={{...keyBtn,color:"var(--coral)"}}>←</button>
         </div>
-      </div>
-      {/* 右：入力表示＋こたえあわせ（縦に積むが幅を取って全体の高さを抑える） */}
-      <div style={{flex:"1 1 180px",maxWidth:240,display:"flex",flexDirection:"column",gap:10}}>
-        <div style={{flex:1,background:"#fff",border:"2px solid var(--line)",borderRadius:12,
-          padding:"12px",textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",
-          fontSize:30,fontWeight:900,minHeight:60,color:"var(--ink)"}}>
-          {value||<span style={{color:"var(--soft)"}}>{(0).toFixed(decimals)}</span>}</div>
         <button onClick={onSubmit} disabled={value===""}
-          style={{...primaryBtn,width:"100%",opacity:value===""?.4:1}}>こたえあわせ</button>
+          style={{...primaryBtn,flex:"1 1 120px",minWidth:120,opacity:value===""?.4:1,padding:"0 18px"}}>
+          こたえあわせ</button>
       </div>
     </div>
   );
