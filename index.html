@@ -2,1083 +2,486 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>小数・数直線マスター</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数直線「かくれゼロ作戦」シミュレーター</title>
+<script src="https://cdn.tailwindcss.com"></script>
 <style>
-  :root{
-    --ink:#1f3a4d;
-    --paper:#fbf7ee;
-    --line:#2c5f7c;
-    --mint:#3fb98f;
-    --mint-dark:#2a8e6b;
-    --coral:#ef7d5a;
-    --sun:#f4c33d;
-    --sky:#dceef5;
-    --grid:#c4d8e0;
-    --soft:#8aa4b1;
-    --lock:#b9c6cd;
-    --glass:#bfe0ef;
-    --merc:#e25b4a;
+  body { font-family: -apple-system, "Hiragino Sans", "Yu Gothic", sans-serif; }
+
+  .number-line { position: relative; height: 160px; min-width: 100%; }
+  .axis { position: absolute; top: 70px; left: 0; right: 0; height: 4px; background: #1e3a8a; border-radius: 2px; }
+  .tick { position: absolute; top: 70px; transform: translateX(-50%); cursor: default; }
+  .tick .tick-line { width: 2px; background: #93c5fd; height: 12px; margin: 0 auto; transform: translateY(-4px); }
+  .tick.major .tick-line { width: 3px; height: 26px; background: #1e3a8a; transform: translateY(-11px); }
+  .tick.clickable { cursor: pointer; }
+  .tick.clickable .tick-line { transition: background 0.15s, height 0.15s; }
+  .tick.clickable:hover .tick-line { background: #ef4444; height: 34px; transform: translateY(-15px); }
+  .tick-label {
+    position: absolute; top: 22px; left: 50%; transform: translateX(-50%);
+    font-size: 18px; font-weight: 700; color: #1e3a8a; white-space: nowrap;
+    display: flex; align-items: baseline; line-height: 1;
   }
-  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
-  html,body{height:100%;}
-  /* 画面の高さに収める。dvh対応ブラウザではアドレスバー分も考慮される */
-  html{height:100dvh;}
-  body{margin:0;padding:0;height:100dvh;overflow:hidden;}
-  body{
-    font-family:"Hiragino Maru Gothic ProN","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
-    background:
-      radial-gradient(circle at 15% 10%, #fffdf7 0%, transparent 45%),
-      radial-gradient(circle at 85% 85%, #eef8f3 0%, transparent 50%),
-      var(--paper);
-    color:var(--ink);
-    -webkit-overflow-scrolling:touch;
-    touch-action:manipulation;
+  /* 整数化のために書き足す末尾0 */
+  .hidden-zero {
+    display: inline-block; opacity: 0; width: 0; overflow: hidden;
+    color: #dc2626; transition: opacity 0.5s ease, width 0.5s ease;
   }
-  /* rootは画面いっぱいの縦フレックス。中身がはみ出す時だけここがスクロール */
-  #root{
-    max-width:920px;margin:0 auto;padding:14px 18px;
-    height:100dvh;display:flex;flex-direction:column;overflow:hidden;
+  .hidden-zero.revealed { opacity: 1; width: 0.6em; }
+  /* 小数点＋整数化されない先頭の0たち（薄くして整数に見せる） */
+  .fade-target { display: inline-block; transition: opacity 0.5s ease; }
+  .fade-target.faded { opacity: 0.12; }
+  .pin {
+    position: absolute; top: -28px; left: 50%; transform: translateX(-50%);
+    font-size: 30px; animation: dropBounce 0.7s ease;
   }
-  /* ホーム画面はリスト主体なので、root内でスクロールできるようにする */
-  .home-screen{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
-  /* プレイ画面は1画面に収める縦フレックス。描画エリアだけが伸縮する */
-  .play-screen{flex:1;min-height:0;display:flex;flex-direction:column;}
-  /* 描画エリア以外は中身の高さを保ち、描画エリア(play-stage)だけが残りを伸縮 */
-  .play-screen > div:not(.play-stage){flex-shrink:0;}
-  .play-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
-  /* 縦長(温度計・ビーカー): 高さ基準で枠内に収める */
-  .play-stage.tall svg{max-height:100%;width:auto;max-width:100%;}
-  /* 横長(数直線・定規): 画面が低いと幅100%では縦があふれて下のラベルが切れる。
-     高さを主制約(max-height)にし、足りる時だけ幅100%まで広げる。比率は保つ。 */
-  .play-stage.wide{align-items:center;}
-  .play-stage.wide svg{max-width:100%;max-height:100%;width:100%;height:auto;}
-  /* 高さが低い横画面では、幅100%だと縦があふれるので高さ基準に切替 */
-  @media (orientation:landscape){
-    .play-stage.wide svg{width:auto;height:100%;max-width:100%;}
+  @keyframes dropBounce {
+    0%{transform:translateX(-50%) translateY(-60px);opacity:0;}
+    50%{transform:translateX(-50%) translateY(6px);opacity:1;}
+    70%{transform:translateX(-50%) translateY(-6px);}
+    85%{transform:translateX(-50%) translateY(3px);}
+    100%{transform:translateX(-50%) translateY(0);opacity:1;}
   }
-  /* せまい画面で各ブロックの余白を自動的に詰める */
-  @media (max-height:680px){
-    #root{padding:8px 14px;}
-    .play-screen > div{margin-bottom:8px !important;}
+  /* ステップ表示 */
+  .step-item {
+    flex: 1; text-align: center; padding: 8px 6px; border-radius: 12px;
+    font-weight: 800; font-size: 13px; color: #94a3b8; background: #f1f5f9;
+    border: 2px solid #e2e8f0; transition: all 0.2s;
   }
-  @media (max-height:560px){
-    #root{padding:6px 12px;}
-    .play-screen > div{margin-bottom:5px !important;}
+  .step-item.active {
+    color: #fff; background: #f59e0b; border-color: #d97706;
+    box-shadow: 0 3px 0 #b45309; transform: translateY(-1px);
   }
-  .reduced * { transition:none !important; animation:none !important; }
-  @keyframes pop{0%{transform:scale(.6);opacity:0;}70%{transform:scale(1.12);}100%{transform:scale(1);opacity:1;}}
-  @keyframes fillup{from{transform:scaleY(0);}to{transform:scaleY(1);}}
+  .step-item.done {
+    color: #166534; background: #dcfce7; border-color: #86efac;
+  }
+  /* ご褒美バッジ */
+  .reward-pop { animation: pop 0.5s ease; }
+  @keyframes pop {
+    0%{transform:scale(0);opacity:0;} 60%{transform:scale(1.25);opacity:1;} 100%{transform:scale(1);}
+  }
 </style>
 </head>
-<body>
-<div id="root"></div>
+<body class="bg-blue-50 min-h-screen py-6 px-3">
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<!-- ============ 画面①：ホーム（タイトル＋レベル選択） ============ -->
+<div id="homeScreen" class="max-w-2xl mx-auto bg-white rounded-3xl shadow-xl p-6 sm:p-10">
+  <h1 class="text-2xl sm:text-3xl font-extrabold text-blue-900 text-center mb-2">
+    🔢 数直線「かくれゼロ作戦」シミュレーター
+  </h1>
+  <p class="text-center text-slate-500 text-sm mb-2">小数も、整数とおなじ考え方でよめるよ！</p>
+  <div class="flex justify-center mb-7">
+    <span class="version-badge inline-flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-3 py-1"></span>
+  </div>
 
-<script type="text/babel">
-const { useState, useRef, useEffect, useCallback } = React;
+  <p class="text-center text-lg font-bold text-blue-800 mb-4">レベルをえらんでスタート！</p>
 
-const APP_VERSION = "v1.7";
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4" id="levelButtons">
+    <button data-level="1" class="level-start px-5 py-6 rounded-2xl font-extrabold text-lg bg-blue-100 hover:bg-blue-200 text-blue-900 shadow-[0_5px_0_#93c5fd] active:translate-y-1 active:shadow-none transition">
+      レベル1<br><span class="text-sm font-bold text-blue-600">整数</span>
+    </button>
+    <button data-level="2" class="level-start px-5 py-6 rounded-2xl font-extrabold text-lg bg-blue-100 hover:bg-blue-200 text-blue-900 shadow-[0_5px_0_#93c5fd] active:translate-y-1 active:shadow-none transition">
+      レベル2<br><span class="text-sm font-bold text-blue-600">0.1のくらい</span>
+    </button>
+    <button data-level="3" class="level-start px-5 py-6 rounded-2xl font-extrabold text-lg bg-blue-100 hover:bg-blue-200 text-blue-900 shadow-[0_5px_0_#93c5fd] active:translate-y-1 active:shadow-none transition">
+      レベル3<br><span class="text-sm font-bold text-blue-600">0.01のくらい</span>
+    </button>
+    <button data-level="4" class="level-start px-5 py-6 rounded-2xl font-extrabold text-lg bg-blue-100 hover:bg-blue-200 text-blue-900 shadow-[0_5px_0_#93c5fd] active:translate-y-1 active:shadow-none transition">
+      レベル4<br><span class="text-sm font-bold text-blue-600">0.001のくらい</span>
+    </button>
+    <button data-level="5" class="level-start sm:col-span-2 px-5 py-6 rounded-2xl font-extrabold text-lg bg-amber-100 hover:bg-amber-200 text-amber-900 shadow-[0_5px_0_#fcd34d] active:translate-y-1 active:shadow-none transition">
+      レベル5 🌟<br><span class="text-sm font-bold text-amber-700">ミックス（0.1〜0.001のくらい）</span>
+    </button>
+  </div>
+</div>
 
-/* ============================================================
-   ステージ定義（6ステージ・一本道進行）
-   theme: thermometer | ruler | beaker | abstract
-   op:    choose | place | type
-   scaffold: full | half | whole  （足場外しの最終形）
-   ============================================================ */
-const STAGES = [
-  { id:1, theme:"thermometer", name:"温度計①", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"choose", scaffold:"full",  zoom:false,
-    desc:"温度をよむ / だんだん広がる / えらぶ" },
-  { id:2, theme:"thermometer", name:"温度計②", min:0, max:10, step:1,    decimals:0, baseStep:1,   op:"place",  scaffold:"half",  zoom:false,
-    desc:"温度をよむ / だんだん広がる / あわせる" },
-  { id:3, theme:"ruler",       name:"定規①",   min:0, max:2,  step:0.1,  decimals:1, baseStep:0.1, op:"choose", scaffold:"half",  zoom:false,
-    desc:"0〜2cm / 1めもり 0.1 / えらぶ" },
-  { id:4, theme:"ruler",       name:"定規②",   min:0, max:2,  step:0.1,  decimals:1, baseStep:0.1, op:"type",   scaffold:"whole", zoom:false,
-    desc:"0〜2cm / 1めもり 0.1 / かく" },
-  { id:5, theme:"beaker",      name:"ビーカー", min:0, max:1,  step:0.01, decimals:2, baseStep:0.1, op:"place",  scaffold:"half",  zoom:true,
-    desc:"0〜1L / ピンチで0.01が出現 / あわせる" },
-  { id:6, theme:"abstract",    name:"数直線",   min:0, max:1,  step:0.001,decimals:3, baseStep:0.1, op:"type",   scaffold:"whole", zoom:true,
-    desc:"0〜1 / ピンチで0.001まで / かく" },
-];
+<!-- ============ 画面②：プレイ画面 ============ -->
+<div id="playScreen" class="hidden max-w-5xl mx-auto bg-white rounded-3xl shadow-xl p-5 sm:p-8">
 
-const OP_INFO = {
-  choose:{emoji:"👀", label:"えらぶ"},
-  place: {emoji:"👆", label:"あわせる"},
-  type:  {emoji:"⌨️", label:"かく"},
-};
-const THEME_INFO = {
-  thermometer:{emoji:"🌡️", label:"温度計", unit:"℃"},
-  ruler:      {emoji:"📏", label:"定規",   unit:"cm"},
-  beaker:     {emoji:"⚗️", label:"ビーカー", unit:"L"},
-  abstract:   {emoji:"📈", label:"数直線", unit:""},
-};
+  <div class="flex items-center justify-between gap-2 mb-4">
+    <button id="backBtn" class="px-4 py-2 rounded-xl font-bold text-sm bg-slate-200 hover:bg-slate-300 text-slate-700 shadow-[0_3px_0_#cbd5e1] active:translate-y-0.5 active:shadow-none transition">
+      ◀ レベル選択へ
+    </button>
+    <div id="levelName" class="font-extrabold text-blue-900 text-base sm:text-lg"></div>
+    <div class="flex items-center gap-2">
+      <span class="version-badge text-xs font-bold text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2.5 py-1"></span>
+      <div id="progress" class="font-bold text-blue-800 text-sm bg-blue-100 rounded-xl px-4 py-2"></div>
+    </div>
+  </div>
 
-const QUESTIONS_PER_STAGE = 5;
+  <!-- 正答数・ご褒美 -->
+  <div class="flex items-center justify-center gap-2 mb-3">
+    <div id="scoreBox" class="font-bold text-amber-800 text-sm bg-amber-100 rounded-xl px-4 py-2">⭐ 正解 0問</div>
+    <div id="rewardBox" class="flex items-center gap-1 text-2xl"></div>
+  </div>
 
-const fmt = (v,d)=> v.toFixed(d);
-// 表示用：末尾の0を消す（0.20→0.2、0.200→0.2、3.0→3、0.10→0.1、1.0→1）。
-const disp = (v,d)=>{
-  if(d<=0) return v.toFixed(0);
-  let s = v.toFixed(d);
-  if(s.indexOf(".")>=0){ s = s.replace(/0+$/,"").replace(/\.$/,""); } // 末尾0と裸の小数点を除去
-  return s;
-};
-// ステージ5：選んだ数の下1桁を隠す（ヒント時は全表示）。固定小数で末尾を□に。
-const maskChosen = (v, d, stage, hint)=>{
-  if(hint || stage.id!==5 || d<=0) return disp(v, d);
-  const full = v.toFixed(d);            // 例 "0.47"
-  return full.slice(0, -1) + "□";       // 例 "0.4□"
-};
-const rnd = (min,max,step)=>{
-  const n = Math.round((max-min)/step);
-  const i = 1 + Math.floor(Math.random()*(n-1)); // 端を避ける
-  return Math.round((min + i*step)*1000)/1000;
-};
+  <!-- 出題（常時表示）：読む情報なので濃い紺地＋白文字でボタンと区別 -->
+  <div id="quizPrompt" class="text-center text-xl sm:text-2xl font-extrabold text-white bg-blue-900 rounded-2xl py-4 px-4 mb-3 shadow-inner"></div>
 
-/* ============================================================
-   バッジ
-   ============================================================ */
-const BADGES = [
-  {streak:3,  emoji:"🌱", label:"めばえ"},
-  {streak:5,  emoji:"⭐", label:"きらめき"},
-  {streak:8,  emoji:"🔥", label:"あつい"},
-  {streak:12, emoji:"👑", label:"マスター"},
-];
+  <!-- ステップ表示（レベル2以上） -->
+  <div id="stepBar" class="flex gap-2 mb-3 hidden">
+    <div id="stepItem1" class="step-item">① 魔法の「0」を書き足そう！</div>
+    <div id="stepItem2" class="step-item">② 小数点をかくそう</div>
+    <div id="stepItem3" class="step-item">③ 整数でさがそう</div>
+  </div>
 
-/* ============================================================
-   保存（localStorage）
-   ============================================================ */
-const SAVE_KEY = "shousuu_master_v2";
-const blankSave = ()=>{
-  const stages = {};
-  STAGES.forEach(s=> stages[s.id] = {cleared:false, best:0, plays:0, correct:0, total:0});
-  return { stages, bestStreak:0, earned:[] };
-};
-const loadSave = ()=>{
-  try{
-    const raw = localStorage.getItem(SAVE_KEY);
-    if(!raw) return blankSave();
-    const data = JSON.parse(raw);
-    const base = blankSave();
-    base.bestStreak = data.bestStreak||0;
-    base.earned = Array.isArray(data.earned)? data.earned:[];
-    if(data.stages){
-      STAGES.forEach(s=>{ if(data.stages[s.id]) base.stages[s.id] = {...base.stages[s.id], ...data.stages[s.id]}; });
+  <!-- ヒント／メッセージ -->
+  <div id="guide" class="text-center text-base font-bold text-blue-800 mb-4"></div>
+
+  <!-- アクションボタン -->
+  <div class="flex flex-wrap justify-center gap-3 mb-4" id="actionArea">
+    <button id="btnStep1" class="px-5 py-3 rounded-xl font-bold bg-red-500 hover:bg-red-600 text-white shadow-[0_4px_0_#991b1b] active:translate-y-1 active:shadow-none transition disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed">
+      ① 魔法の「0」を書き足す ✨
+    </button>
+    <button id="btnStep2" disabled class="px-5 py-3 rounded-xl font-bold bg-slate-300 text-slate-600 shadow-[0_4px_0_#94a3b8] active:translate-y-1 active:shadow-none transition disabled:opacity-40 disabled:shadow-none disabled:cursor-not-allowed">
+      ② 小数点をかくす（整数にする）🙈
+    </button>
+  </div>
+
+  <div class="pb-4 mb-2 border-2 border-dashed border-blue-200 rounded-2xl bg-blue-50/40">
+    <div id="numberLine" class="number-line px-8 py-6"></div>
+  </div>
+
+  <div id="quizArea" class="hidden text-center mt-4">
+    <div id="quizResult" class="min-h-[44px] flex items-center justify-center text-lg font-bold"></div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const APP_VERSION = "v1.1.0";
+  let state = {
+    level: 1, startVal: 0, endVal: 20, step: 1, decimals: 0,
+    targetVal: 0, quizActive: false, qIndex: 0, qTotal: 5, solved: false,
+    correct: 0   // このレベルでの正解数
+  };
+
+  const LEVEL_NAMES = {
+    1: "レベル1（整数）",
+    2: "レベル2（0.1のくらい）",
+    3: "レベル3（0.01のくらい）",
+    4: "レベル4（0.001のくらい）",
+    5: "レベル5（ミックス）"
+  };
+
+  // ご褒美：正解数のしきい値とバッジ
+  const REWARDS = [
+    { n: 1, emoji: "🌱", msg: "はじめの1問クリア！" },
+    { n: 2, emoji: "⭐", msg: "いいちょうし！" },
+    { n: 3, emoji: "🎖️", msg: "3問せいかい！メダルゲット！" },
+    { n: 4, emoji: "🏅", msg: "あと1問！すごい！" },
+    { n: 5, emoji: "🏆", msg: "ぜんもんせいかい！トロフィー！" }
+  ];
+
+  const homeScreen = document.getElementById("homeScreen");
+  const playScreen = document.getElementById("playScreen");
+  const numberLineEl = document.getElementById("numberLine");
+  const guideEl = document.getElementById("guide");
+  const quizPromptEl = document.getElementById("quizPrompt");
+  const stepBar = document.getElementById("stepBar");
+  const stepItem1 = document.getElementById("stepItem1");
+  const stepItem2 = document.getElementById("stepItem2");
+  const stepItem3 = document.getElementById("stepItem3");
+  const btnStep1 = document.getElementById("btnStep1");
+  const btnStep2 = document.getElementById("btnStep2");
+  const quizArea = document.getElementById("quizArea");
+  const quizResult = document.getElementById("quizResult");
+  const progressEl = document.getElementById("progress");
+  const levelNameEl = document.getElementById("levelName");
+  const scoreBox = document.getElementById("scoreBox");
+  const rewardBox = document.getElementById("rewardBox");
+  const actionArea = document.getElementById("actionArea");
+  const levelStartBtns = document.querySelectorAll(".level-start");
+
+  const round = (v, d) => Number(Math.round(Number(v + "e" + d)) + "e-" + d);
+  const fmt = (v, d) => v.toFixed(d);
+  const toIntString = (v, d) => Math.round(round(v, d) * Math.pow(10, d)).toString();
+
+  // 1問分の設定。level 5 は 2〜4からランダムに選ぶ。
+  function buildLevelConfig(level, qIndex) {
+    if (level === 1) {
+      const ranges = [
+        { start: 0, end: 20 }, { start: 0, end: 20 },
+        { start: 15, end: 35 }, { start: 100, end: 120 }, { start: 100, end: 120 }
+      ];
+      const r = ranges[qIndex] || ranges[0];
+      const target = r.start + Math.floor(Math.random() * (r.end - r.start - 1)) + 1;
+      return { startVal: r.start, endVal: r.end, step: 1, decimals: 0, targetVal: target, majorEvery: 5 };
     }
-    return base;
-  }catch(e){ return blankSave(); }
-};
-const writeSave = (data)=>{
-  try{ localStorage.setItem(SAVE_KEY, JSON.stringify(data)); }catch(e){}
-};
 
-/* ============================================================
-   目盛り計算（ズーム＆フェードイン対応）
-   ============================================================ */
-function computeTicks({min,max,step,baseStep,baseDec,zoom,zoomCenter,padFrac}){
-  const span = max - min;
-  const viewSpan = span / zoom;
-  let viewMin = zoomCenter - viewSpan/2;
-  let viewMax = zoomCenter + viewSpan/2;
-  if(viewMin < min){ viewMin = min; viewMax = min + viewSpan; }
-  if(viewMax > max){ viewMax = max; viewMin = max - viewSpan; }
-  const usableFrac = 1 - padFrac*2;
-  const pxGap = (s)=> 1000 * usableFrac * (s/(viewMax-viewMin)); // 仮想1000px基準
+    // ミックスレベル：2〜4のどれかを引く
+    let useLevel = level;
+    if (level === 5) {
+      useLevel = 2 + Math.floor(Math.random() * 3); // 2,3,4
+    }
 
-  const APPEAR_GAP = 110;
-  const levels = [];
-  let s = baseStep, dec = baseDec;
-  levels.push({s, dec, fade:false});
-  while(s > step + 1e-9){
-    const parentGap = pxGap(s);
-    const childS = Math.round((s/10)*1e6)/1e6;
-    if(parentGap > APPEAR_GAP){
-      levels.push({s:childS, dec:dec+1, fade:true});
-      s = childS; dec = dec+1;
-    } else break;
+    if (useLevel === 2) {
+      const target = round((Math.floor(Math.random() * 49) + 1) / 10, 1);
+      return { startVal: 0, endVal: 5, step: 0.1, decimals: 1, targetVal: target, majorEvery: 10 };
+    }
+    if (useLevel === 3) {
+      const intPart = Math.floor(Math.random() * 5) + 1;
+      const decFirst = Math.floor(Math.random() * 7);
+      const start = round(intPart + decFirst / 10, 2);
+      const end = round(start + 0.3, 2);
+      const tickCount = Math.round((end - start) / 0.01);
+      const idx = Math.floor(Math.random() * (tickCount - 1)) + 1;
+      const target = round(start + idx * 0.01, 2);
+      return { startVal: start, endVal: end, step: 0.01, decimals: 2, targetVal: target, majorEvery: 10 };
+    }
+    // useLevel 4
+    const baseDec = Math.floor(Math.random() * 9);
+    const start = round(baseDec / 100, 3);
+    const end = round(start + 0.05, 3);
+    const tickCount = Math.round((end - start) / 0.001);
+    const idx = Math.floor(Math.random() * (tickCount - 1)) + 1;
+    const target = round(start + idx * 0.001, 3);
+    return { startVal: start, endVal: end, step: 0.001, decimals: 3, targetVal: target, majorEvery: 10 };
   }
 
-  const ticks = [];
-  levels.forEach((lv, idx)=>{
-    // この刻みのラベル同士が十分離れていれば、その段のラベルを表示してよい
-    const lvLabelable = pxGap(lv.s) > 60;
-    for(let v=min; v<=max+1e-9; v=Math.round((v+lv.s)*1e6)/1e6){
-      const r = Math.round(v*1e6)/1e6;
-      if(r<viewMin-1e-9 || r>viewMax+1e-9) continue;
-      if(idx>0){
-        const onParent = Math.abs(r/levels[idx-1].s - Math.round(r/levels[idx-1].s))<1e-6;
-        if(onParent) continue;
-      }
-      ticks.push({v:r, s:lv.s, dec:lv.dec, fade:lv.fade, isBase:idx===0, labelable:lvLabelable});
+  function makeLabelHTML(value, decimals) {
+    if (decimals === 0) {
+      return '<span class="int-part">' + value + '</span>';
     }
-  });
+    const s = value.toFixed(decimals);
+    const [intPart, decPartFull] = s.split(".");
+    const lastDigit = decPartFull.slice(-1);
+    const decKeep = decPartFull.slice(0, -1);
 
-  const finest = levels[levels.length-1];
-  const finestGap = pxGap(finest.s);
-  return { ticks, viewMin, viewMax, finest, labelFinest: finestGap>60 };
-}
-
-/* ============================================================
-   足場外し：このベース目盛りに数字を出すか
-   scaffold: full=全部 / half=区切り(0.5,整数)のみ / whole=整数のみ
-   ============================================================ */
-function baseLabelVisible(v, scaffold, decimals){
-  const isWhole = Math.abs(v-Math.round(v))<1e-6;
-  if(scaffold==="full") return true;
-  if(scaffold==="whole") return isWhole;
-  // half: 整数 or .5
-  const half = Math.abs((v*2)-Math.round(v*2))<1e-6;
-  return half;
-}
-
-/* ============================================================
-   横向き数直線（定規・抽象用）
-   ============================================================ */
-function NumberLine({stage, zoom, zoomCenter, showAllLabels, hintVals, arrow, marker, pickable, onPick, answer, reveal}){
-  const W = 720, H = 170, padL = 50, padR = 50;
-  const lineY = 92;
-  const usable = W - padL - padR;
-  const padFrac = padL / W;
-
-  const {ticks, viewMin, viewMax, finest, labelFinest} = computeTicks({
-    min:stage.min, max:stage.max, step:stage.step, baseStep:stage.baseStep,
-    baseDec: stage.baseStep<1?1:0, zoom, zoomCenter, padFrac
-  });
-
-  const xOf = (val)=> padL + ((val - viewMin)/(viewMax - viewMin))*usable;
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block",userSelect:"none"}}>
-      <line x1={padL} y1={lineY} x2={W-padR} y2={lineY} stroke="var(--line)" strokeWidth="3" strokeLinecap="round"/>
-      <path d={`M${W-padR} ${lineY} l-12 -6 v12 z`} fill="var(--line)"/>
-
-      {ticks.map((t,i)=>{
-        const x = xOf(t.v);
-        const isEnd = Math.abs(t.v-stage.min)<1e-9 || Math.abs(t.v-stage.max)<1e-9;
-        const isWhole = Math.abs(t.v-Math.round(t.v))<1e-6;
-        const big = t.isBase && (stage.decimals===0 || isWhole);
-        const half = t.isBase ? (big?18:13) : 9;
-
-        let showLabel=false, labelText="", labelSize=15, fy=lineY+40;
-        if(t.isBase){
-          const zoomed = zoom>1.05;
-          const isHintVal = hintVals && hintVals.some(h=>Math.abs(h-t.v)<1e-6);
-          const allowed = isEnd || showAllLabels || zoomed || isHintVal || baseLabelVisible(t.v, stage.scaffold, stage.decimals);
-          showLabel = allowed;
-          labelText = disp(t.v, stage.baseStep<1?1:0);
-          labelSize = big?19:15;
-        } else if(t.labelable || (hintVals && hintVals.some(h=>Math.abs(h-t.v)<1e-6))){
-          showLabel=true; labelText=disp(t.v,t.dec);
-          labelSize = 13; fy=lineY+32;
-        }
-        // 数字が出る目もりは黒、出ない目もりは緑
-        const col = showLabel ? "var(--line)" : "var(--mint)";
-        const labelCol = "var(--ink)";
-        return (
-          <g key={"tk"+i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
-            <line x1={x} y1={lineY-half} x2={x} y2={lineY+half} stroke={col} strokeWidth={t.isBase?(big?3:2):2}/>
-            {showLabel && <text x={x} y={fy} textAnchor="middle" fontSize={labelSize}
-              fontWeight={big?"700":(t.isBase?"500":"600")} fill={labelCol}>{labelText}</text>}
-          </g>
-        );
-      })}
-
-      {arrow!=null && arrow>=viewMin && arrow<=viewMax && (
-        <g>
-          <text x={xOf(arrow)} y={lineY-50} textAnchor="middle" fontSize="20" fontWeight="900" fill="var(--coral)">?</text>
-          <line x1={xOf(arrow)} y1={lineY-44} x2={xOf(arrow)} y2={lineY-5} stroke="var(--coral)" strokeWidth="4" strokeLinecap="round"/>
-          <path d={`M${xOf(arrow)} ${lineY-2} l-8 -13 h16 z`} fill="var(--coral)"/>
-        </g>
-      )}
-
-      {marker!=null && marker>=viewMin && marker<=viewMax && (
-        <g style={{transition:"all .25s"}}>
-          <line x1={xOf(marker)} y1={lineY-30} x2={xOf(marker)} y2={lineY+30} stroke="var(--coral)" strokeWidth="3"/>
-          <path d={`M${xOf(marker)} ${lineY-30} l-9 -14 h18 z`} fill="var(--coral)"/>
-        </g>
-      )}
-
-      {reveal && answer!=null && answer>=viewMin && answer<=viewMax && (
-        <g>
-          <line x1={xOf(answer)} y1={lineY-34} x2={xOf(answer)} y2={lineY+34} stroke="var(--mint-dark)" strokeWidth="3" strokeDasharray="5 4"/>
-          <text x={xOf(answer)} y={lineY-42} textAnchor="middle" fontSize="15" fontWeight="700" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
-        </g>
-      )}
-
-      {pickable && (
-        <rect x={padL-10} y={lineY-40} width={usable+20} height="80" fill="transparent" style={{cursor:"pointer"}}
-          onPointerDown={(e)=>{
-            const rect = e.currentTarget.ownerSVGElement.getBoundingClientRect();
-            const px = (e.clientX-rect.left)/rect.width*W;
-            const val = viewMin + ((px-padL)/usable)*(viewMax-viewMin);
-            const snapped = Math.round(val/stage.step)*stage.step;
-            onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
-          }}/>
-      )}
-    </svg>
-  );
-}
-
-/* ============================================================
-   温度計（縦・整数）
-   range={min,max} は問題番号で動的に変わる。
-   labelMode: "all"=全部 / "fivesTens"=5と10のみ / "scaled"=目盛りステップごと
-   tickStep: 目盛りの間隔（範囲が広いと 5 や 10）
-   ============================================================ */
-function Thermometer({stage, range, labelMode, tickStep, marker, pickable, onPick, answer, reveal, arrow, hintVals}){
-  const W=240, H=380, cx=92, top=34, bot=320, bulbR=26;
-  const min=range.min, max=range.max;
-  const usable = bot-top;
-  const yOf=(v)=> bot - ((v-min)/(max-min))*usable;
-  const ticks=[];
-  for(let v=min; v<=max+1e-9; v+=tickStep){ ticks.push(Math.round(v*1e6)/1e6); }
-  const fillV = reveal ? answer : (marker!=null?marker:min);
-  const fillTop = yOf(fillV);
-
-  // ラベルを出すか
-  const labelVisible=(v)=>{
-    if(hintVals && hintVals.some(h=>Math.abs(h-v)<1e-6)) return true; // ヒント：正答の前後を表示
-    if(arrow===v) return false; // 矢印で問うている値は隠す
-    if(labelMode==="all") return true;
-    if(labelMode==="fivesTens") return (Math.abs(v % 5)<1e-6) || v===min || v===max;
-    // scaled：大きな目盛り（10とび、または範囲の代表点）にだけ振る
-    const bigStep = tickStep>=10 ? tickStep : tickStep*5;
-    return Math.abs(v % bigStep)<1e-6 || v===min || v===max;
-  };
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",maxWidth:260,height:"auto",display:"block",margin:"0 auto",userSelect:"none"}}>
-      <rect x={cx-14} y={top-8} width="28" height={usable+16} rx="14" fill="#fff" stroke="var(--line)" strokeWidth="3"/>
-      <circle cx={cx} cy={bot+bulbR-4} r={bulbR} fill="#fff" stroke="var(--line)" strokeWidth="3"/>
-      {/* 水銀 */}
-      <circle cx={cx} cy={bot+bulbR-4} r={bulbR-7} fill="var(--merc)"/>
-      <rect x={cx-7} y={fillTop} width="14" height={bot-fillTop+4} fill="var(--merc)" style={{transition:"all .35s"}}/>
-      {/* 目盛り */}
-      {ticks.map((v,i)=>{
-        const y=yOf(v);
-        const isBig = Math.abs(v % (tickStep>=10?tickStep:tickStep*5))<1e-6 || v===5;
-        const show = labelVisible(v);
-        return (
-          <g key={i}>
-            <line x1={cx+14} y1={y} x2={cx+(isBig?30:24)} y2={y} stroke="var(--line)" strokeWidth={isBig?3:2}/>
-            {show && <text x={cx+36} y={y+6} fontSize="18" fontWeight="700" fill="var(--ink)">{v}</text>}
-          </g>
-        );
-      })}
-      {arrow!=null && (
-        <g>
-          <path d={`M${cx+34} ${yOf(arrow)} l16 -9 v18 z`} fill="var(--coral)"/>
-          <text x={cx+56} y={yOf(arrow)+7} textAnchor="start" fontSize="26" fontWeight="900" fill="var(--coral)">?</text>
-        </g>
-      )}
-      {marker!=null && !reveal && (
-        <g style={{transition:"all .25s"}}>
-          <line x1={cx-28} y1={yOf(marker)} x2={cx-14} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
-          <path d={`M${cx-28} ${yOf(marker)} l-13 -8 v16 z`} fill="var(--coral)"/>
-        </g>
-      )}
-      {reveal && answer!=null && (
-        <text x={cx-32} y={yOf(answer)+6} textAnchor="end" fontSize="19" fontWeight="800" fill="var(--mint-dark)">{answer}</text>
-      )}
-      {pickable && (
-        <rect x={cx-50} y={top-12} width="100" height={usable+24} fill="transparent" style={{cursor:"pointer"}}
-          onPointerDown={(e)=>{
-            const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
-            const py=(e.clientY-rect.top)/rect.height*H;
-            const val=min + ((bot-py)/usable)*(max-min);
-            const snapped=Math.round(val/stage.step)*stage.step;
-            onPick(Math.min(max,Math.max(min,snapped)));
-          }}/>
-      )}
-    </svg>
-  );
-}
-
-/* ============================================================
-   ビーカー（平面・正面ビュー・顕微鏡ズーム）
-   枠の大きさは固定（H一定）。zoomは「液量域の内部だけ」を縦に拡大し、
-   注目点(focus)が枠の中央に来るようにviewBoxを移動して見せる。
-   → 画面全体ではなく、ビーカー枠の中だけが拡大される。
-   目盛りのフェードインは画面上の間隔(px)で判定する。
-   ============================================================ */
-function Beaker({stage, zoom, focus, marker, pickable, onPick, answer, reveal, showAllLabels, hintVals}){
-  const W=260, top=30, bot=270;        // 枠の基準（拡大前）
-  const left=66, right=194;
-  const baseUsable = bot-top;          // zoom=1 のときの液量域の高さ
-  const H = bot + 50;                  // SVGの高さ
-  const span = stage.max - stage.min;
-
-  // --- ビーカー本体の見た目の拡大（最大150%）---
-  // ズーム量に応じてビーカーの枠を最大1.5倍まで拡大する。
-  // 拡大の基点は左下の角(left, bot)。右と上へ広がり、目盛りの横位置(left)は不変。
-  const MAX_VIS = 1.5;
-  const vis = Math.min(MAX_VIS, Math.max(1, zoom));   // 1.0〜1.5
-  // 拡大後の枠の上端・右端（左端と下端は固定）
-  const fTop  = bot - baseUsable*vis;                 // 上へ伸びる
-  const fRight = left + (right-left)*vis;             // 右へ伸びる
-  const usableFrame = bot - fTop;                     // 拡大後の枠の高さ
-  // 拡大したビーカーが上に伸びても切れないよう、viewBoxの上端を実際の拡大状態に追従させる。
-  // （最大拡大で固定すると通常時に無駄な縦余白が出て画面からはみ出すため）
-  const vbTop = Math.min(0, fTop - 16);
-  const vbH = H - vbTop;
-
-  // 拡大時、液量域(fTop〜bot)の中で zoom 倍に引き伸ばす。
-  // focus（注目している値）が常に枠の中央に来るように原点をずらす。
-  const usableH = usableFrame * zoom;           // 引き伸ばした内部の高さ
-  const centerV = focus==null ? (stage.min+stage.max)/2 : focus;
-  const frameMidY = (fTop+bot)/2;               // 拡大後の枠の縦中央
-  // 値→「拡大した内部座標系」での仮想y（底=bot, 上=fTop）
-  const yFull=(v)=> (fTop+usableH) - ((v-stage.min)/span)*usableH;
-  // centerV が frameMidY に来るようにオフセット
-  let offset = frameMidY - yFull(centerV);
-  // 端で内部がはみ出さないようにクランプ
-  const topZv0 = yFull(stage.max) + offset;     // 拡大内部の上端
-  const botZv0 = yFull(stage.min) + offset;     // 拡大内部の下端
-  if(topZv0 > fTop) offset += (fTop - topZv0);
-  if(botZv0 < bot) offset += (bot - botZv0);
-  const yOf=(v)=> yFull(v) + offset;
-  const pxGap=(s)=> (s/span)*usableH;           // 刻みsの画面上の高さ(px)
-
-  // 段階的に細かい目盛りを解禁（間隔が開いたら子の刻みを追加）
-  const APPEAR_GAP=70;
-  const levels=[]; let s=stage.baseStep, dec=1;
-  levels.push({s,dec,fade:false});
-  while(s>stage.step+1e-9){
-    if(pxGap(s)>APPEAR_GAP){ const c=Math.round((s/10)*1e6)/1e6; levels.push({s:c,dec:dec+1,fade:true}); s=c; dec=dec+1; }
-    else break;
-  }
-  const ticks=[];
-  levels.forEach((lv,idx)=>{
-    const lvLabelable = pxGap(lv.s) > 34;
-    for(let v=stage.min; v<=stage.max+1e-9; v=Math.round((v+lv.s)*1e6)/1e6){
-      const r=Math.round(v*1e6)/1e6;
-      if(idx>0){ const onParent=Math.abs(r/levels[idx-1].s-Math.round(r/levels[idx-1].s))<1e-6; if(onParent)continue; }
-      ticks.push({v:r,s:lv.s,dec:lv.dec,fade:lv.fade,isBase:idx===0,labelable:lvLabelable});
+    let html = "";
+    if (intPart === "0") {
+      html += '<span class="fade-target">' + intPart + '</span>';
+    } else {
+      html += '<span class="int-part">' + intPart + '</span>';
     }
-  });
-  const finest=levels[levels.length-1];
-  const labelFinest=pxGap(finest.s)>34;
+    html += '<span class="fade-target">.</span>';
 
-  const fillV = reveal? answer : (marker!=null?marker:stage.min);
-  const fillY = yOf(Math.min(stage.max,Math.max(stage.min,fillV)));
-  // 枠内に見えているものだけ描く判定（拡大後の上端fTop基準）
-  const inFrame=(y)=> y>=fTop-2 && y<=bot+2;
-
-  return (
-    <svg viewBox={`0 ${vbTop} ${W} ${vbH}`}
-         style={{width:"100%",maxWidth:300,height:"auto",display:"block",margin:"0 auto",userSelect:"none",touchAction:"none"}}>
-      <clipPath id="beakerClip"><rect x={left} y={fTop} width={fRight-left} height={bot-fTop}/></clipPath>
-      <clipPath id="beakerTickClip"><rect x={0} y={fTop-10} width={W} height={bot-fTop+22}/></clipPath>
-      {/* 液（平面：水平な水面）。枠でクリップ */}
-      <g clipPath="url(#beakerClip)" style={{transition:"all .25s"}}>
-        <rect x={left} y={fillY} width={fRight-left} height={(bot+200)-fillY} fill="var(--glass)" style={{transition:"all .25s"}}/>
-        <rect x={left} y={fillY} width={fRight-left} height="3" fill="#7fc3e0" style={{transition:"all .25s"}}/>
-      </g>
-      {/* 容器（左下の角を基点に、右上方向へ拡大） */}
-      <path d={`M${left} ${fTop-10} L${left} ${bot} L${fRight} ${bot} L${fRight} ${fTop-10}`}
-        fill="none" stroke="var(--line)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round"
-        style={{transition:"all .25s"}}/>
-      {/* 目盛り（左壁の内側）。枠でクリップして外には出さない */}
-      <g clipPath="url(#beakerTickClip)">
-      {ticks.map((t,i)=>{
-        const y=yOf(t.v);
-        if(!inFrame(y)) return null;
-        const isWhole=Math.abs(t.v-Math.round(t.v))<1e-6;
-        let showLabel=false, labelText="", labelCol="var(--soft)", size=14;
-        if(t.isBase){
-          // 拡大中は手掛かりとして0.1きざみの基準ラベルを必ず表示
-          const zoomed = zoom>1.05;
-          const isHintVal = hintVals && hintVals.some(h=>Math.abs(h-t.v)<1e-6);
-          showLabel = showAllLabels || zoomed || isHintVal || baseLabelVisible(t.v, stage.scaffold, stage.decimals) || isWhole;
-          labelText=disp(t.v,1); labelCol=isWhole?"var(--ink)":"var(--soft)"; size=15;
-        } else if(t.labelable){
-          showLabel=true; labelText=disp(t.v,t.dec); labelCol="var(--mint-dark)"; size=12;
-        }
-        return (
-          <g key={i} style={t.fade?{transition:"opacity .45s",opacity:1}:undefined}>
-            <line x1={left} y1={y} x2={left+(t.isBase?18:10)} y2={y} stroke={t.isBase?"var(--line)":"var(--mint)"} strokeWidth="2"/>
-            {showLabel && <text x={left-7} y={y+5} textAnchor="end" fontSize={size} fontWeight="700" fill={labelCol}>{labelText}</text>}
-          </g>
-        );
-      })}
-      {marker!=null && !reveal && inFrame(yOf(marker)) && (
-        <g style={{transition:"all .25s"}}>
-          <line x1={fRight} y1={yOf(marker)} x2={fRight+24} y2={yOf(marker)} stroke="var(--coral)" strokeWidth="3"/>
-          <path d={`M${fRight} ${yOf(marker)} l13 -8 v16 z`} fill="var(--coral)"/>
-        </g>
-      )}
-      {reveal && answer!=null && inFrame(yOf(answer)) && (
-        <text x={fRight+9} y={yOf(answer)+6} fontSize="16" fontWeight="800" fill="var(--mint-dark)">{disp(answer,stage.decimals)}</text>
-      )}
-      </g>
-      {pickable && (
-        <rect x={left-34} y={fTop} width={fRight-left+68} height={bot-fTop} fill="transparent" style={{cursor:"pointer"}}
-          onPointerDown={(e)=>{
-            if(e.currentTarget.ownerSVGElement.dataset.pinching==="1") return; // ピンチ中はタップ無効
-            const rect=e.currentTarget.ownerSVGElement.getBoundingClientRect();
-            const py=vbTop + (e.clientY-rect.top)/rect.height*vbH;
-            // 画面y → 内部仮想y → 値
-            const yv = py - offset;
-            const val = stage.min + ((fTop+usableH - yv)/usableH)*span;
-            const snapped=Math.round(val/stage.step)*stage.step;
-            onPick(Math.min(stage.max,Math.max(stage.min,Math.round(snapped*1e6)/1e6)));
-          }}/>
-      )}
-    </svg>
-  );
-}
-
-/* ============================================================
-   アプリ本体
-   ============================================================ */
-function App(){
-  const [screen,setScreen] = useState("home");
-  const [stageId,setStageId] = useState(1);
-  const [save,setSave] = useState(loadSave);
-  const [streak,setStreak] = useState(0);
-
-  useEffect(()=>{ writeSave(save); },[save]);
-
-  const isUnlocked = (id)=>true; // 全ステージ最初から選択可
-
-  const start=(id)=>{ if(!isUnlocked(id))return; setStageId(id); setScreen("play"); setStreak(0); };
-
-  const logResult=(ok)=>{
-    setSave(prev=>{
-      const c = JSON.parse(JSON.stringify(prev));
-      const st = c.stages[stageId];
-      st.total++; if(ok) st.correct++;
-      return c;
-    });
-    if(ok){
-      setStreak(s=>{
-        const ns=s+1;
-        setSave(prev=>{
-          const c=JSON.parse(JSON.stringify(prev));
-          c.bestStreak=Math.max(c.bestStreak,ns);
-          BADGES.forEach(b=>{ if(ns===b.streak && !c.earned.includes(b.label)) c.earned.push(b.label); });
-          return c;
-        });
-        return ns;
-      });
-    }else{ setStreak(0); }
-  };
-
-  const finishStage=(correctCount)=>{
-    setSave(prev=>{
-      const c=JSON.parse(JSON.stringify(prev));
-      const st=c.stages[stageId];
-      st.plays++;
-      st.best=Math.max(st.best,correctCount);
-      if(correctCount>=QUESTIONS_PER_STAGE-1) st.cleared=true; // 5問中4問以上でクリア
-      return c;
-    });
-  };
-
-  const resetAll=()=>{
-    if(confirm("学習記録とバッジをすべて消します。よろしいですか？")){
-      const b=blankSave(); setSave(b); writeSave(b); setStreak(0);
-    }
-  };
-
-  return (
-    <div style={{display:"flex",flexDirection:"column",height:"100%",minHeight:0}}>
-      <Header streak={streak} bestStreak={save.bestStreak}/>
-      {screen==="home"
-        ? <Home save={save} isUnlocked={isUnlocked} onStart={start} onReset={resetAll}/>
-        : <Play stage={STAGES.find(s=>s.id===stageId)} onResult={logResult}
-                streak={streak} onHome={()=>setScreen("home")} onFinish={finishStage}
-                nextStage={isUnlocked(stageId+1)||save.stages[stageId]?.cleared ? STAGES.find(s=>s.id===stageId+1):null}
-                onNextStage={start}/>}
-    </div>
-  );
-}
-
-function Header({streak,bestStreak}){
-  return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexShrink:0}}>
-      <span style={{display:"flex",alignItems:"center",gap:8}}>
-        <span style={{fontSize:24,fontWeight:800,letterSpacing:"-.5px"}}>小数・数直線マスター</span>
-        <span style={{fontSize:11,fontWeight:800,color:"#fff",background:"var(--mint-dark)",
-          borderRadius:8,padding:"2px 8px",letterSpacing:".3px"}}>{APP_VERSION}</span>
-      </span>
-      <div style={{display:"flex",gap:8}}>
-        <Pill label="れんぞく" value={streak} color="var(--coral)"/>
-        <Pill label="さいこう" value={bestStreak} color="var(--mint-dark)"/>
-      </div>
-    </div>
-  );
-}
-function Pill({label,value,color}){
-  return (
-    <div style={{background:"#fff",border:`2px solid ${color}`,borderRadius:14,
-      padding:"5px 12px",textAlign:"center",minWidth:62,boxShadow:"0 2px 0 rgba(0,0,0,.04)"}}>
-      <div style={{fontSize:10,color:"var(--soft)",fontWeight:700}}>{label}</div>
-      <div style={{fontSize:20,fontWeight:800,color}}>{value}</div>
-    </div>
-  );
-}
-
-/* ---------------- ホーム（ステージマップ） ---------------- */
-function Home({save,isUnlocked,onStart,onReset}){
-  return (
-    <div className="home-screen">
-      <div style={{background:"var(--sky)",borderRadius:18,padding:"14px 16px",marginBottom:18,border:"2px solid var(--grid)"}}>
-        <div style={{fontWeight:800,marginBottom:4}}>すきなステージをえらんでチャレンジ！</div>
-        <div style={{fontSize:13,color:"var(--line)"}}>
-          1ステージ <b>5問</b>。<b>4問いじょう</b>せいかいでクリア！ ぜんステージ いつでもあそべるよ。
-          ビーカーと数直線では <b>2本の指でひろげる（ピンチ）</b> とかくれた目もりが出てくる。
-        </div>
-      </div>
-
-      <div style={{display:"grid",gap:12}}>
-        {STAGES.map((s,idx)=>{
-          const rec=save.stages[s.id];
-          const unlocked=isUnlocked(s.id);
-          const acc = rec.total? Math.round(rec.correct/rec.total*100):null;
-          const th=THEME_INFO[s.theme], op=OP_INFO[s.op];
-          return (
-            <button key={s.id} disabled={!unlocked} onClick={()=>onStart(s.id)}
-              style={{textAlign:"left",cursor:unlocked?"pointer":"not-allowed",
-                border:`2px solid ${rec.cleared?"var(--mint)":(unlocked?"var(--grid)":"#e3e9ec")}`,
-                background: unlocked?"#fff":"#f4f6f7", borderRadius:16, padding:"12px 14px",
-                opacity:unlocked?1:.6, transition:"transform .12s",
-                boxShadow: unlocked?"0 3px 0 rgba(0,0,0,.05)":"none",
-                display:"flex",alignItems:"center",gap:14}}
-              onMouseDown={e=>{if(unlocked)e.currentTarget.style.transform="translateY(2px)";}}
-              onMouseUp={e=>e.currentTarget.style.transform=""}
-              onMouseLeave={e=>e.currentTarget.style.transform=""}>
-              <div style={{fontSize:34,minWidth:44,textAlign:"center"}}>{unlocked?th.emoji:"🔒"}</div>
-              <div style={{flex:1}}>
-                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2,flexWrap:"wrap"}}>
-                  <span style={{background:rec.cleared?"var(--mint)":"var(--ink)",color:"#fff",fontWeight:800,
-                    borderRadius:9,padding:"2px 9px",fontSize:13}}>STAGE {s.id}</span>
-                  <span style={{fontWeight:800,fontSize:15}}>{s.name}</span>
-                  <span style={{fontSize:12,color:"var(--soft)"}}>{op.emoji}{op.label}</span>
-                  {rec.cleared && <span style={{fontSize:13,color:"var(--mint-dark)",fontWeight:800}}>クリア✓</span>}
-                </div>
-                <div style={{fontSize:11.5,color:"var(--soft)",lineHeight:1.4}}>{s.desc}</div>
-                {acc!=null && unlocked && <div style={{fontSize:11,marginTop:4,color:"var(--mint-dark)",fontWeight:700}}>
-                  さいこう {rec.best}/{QUESTIONS_PER_STAGE}・せいかいりつ {acc}%</div>}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      <div style={{marginTop:24}}>
-        <div style={{fontWeight:800,marginBottom:8}}>あつめたバッジ</div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          {BADGES.map(b=>{
-            const got=save.earned.includes(b.label);
-            return (
-              <div key={b.label} style={{textAlign:"center",opacity:got?1:.32,filter:got?"none":"grayscale(1)",transition:"all .3s"}}>
-                <div style={{fontSize:34}}>{b.emoji}</div>
-                <div style={{fontSize:11,fontWeight:700}}>{b.label}</div>
-                <div style={{fontSize:10,color:"var(--soft)"}}>{b.streak}れんぞく</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div style={{marginTop:26,textAlign:"center"}}>
-        <button onClick={onReset} style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:12,
-          padding:"8px 16px",fontWeight:700,cursor:"pointer",color:"var(--soft)",fontSize:12}}>
-          学習記録をリセット
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ---------------- プレイ ---------------- */
-function Play({stage,onResult,streak,onHome,onFinish,nextStage,onNextStage}){
-  const canZoom = stage.zoom;
-  const answerStep = stage.step;
-  const ansDec = stage.decimals;
-
-  // --- 温度計の問題番号別レンジ（②）---
-  // 1問目:0〜10 全表示 / 2問目:0〜10 5と10のみ / 3問目以降:範囲を段階拡大
-  const isThermo = stage.theme==="thermometer";
-  const thermoSetup = (qno)=>{
-    // 1目もりは常に1度。最大値を 5→10→15→20→25 と段階的に広げる。
-    // 範囲が広がってもラベルが密集しないよう、5とびにだけ数字を振る。
-    if(qno===1) return {min:0,max:5, tickStep:1,labelMode:"all"};
-    if(qno===2) return {min:0,max:10,tickStep:1,labelMode:"fivesTens"};
-    if(qno===3) return {min:0,max:15,tickStep:1,labelMode:"fivesTens"};
-    if(qno===4) return {min:0,max:20,tickStep:1,labelMode:"fivesTens"};
-    return {min:0,max:25,tickStep:1,labelMode:"fivesTens"};
-  };
-
-  const [qNo,setQNo] = useState(1);
-
-  // 現在の出題レンジ（温度計は問題番号で変化、他はステージ固定）
-  const range = isThermo ? thermoSetup(qNo) : {min:stage.min,max:stage.max};
-  const thermoTickStep = isThermo ? thermoSetup(qNo).tickStep : 1;
-  const thermoLabelMode = isThermo ? thermoSetup(qNo).labelMode : "all";
-  // target生成・採点に使うレンジ
-  const curMin = range.min, curMax = range.max;
-  // 温度計は目盛り間隔で答える（tickStepが解答精度）
-  const curStep = isThermo ? thermoTickStep : answerStep;
-
-  const maxZoom = canZoom ? Math.min(60, Math.round((stage.max-stage.min)/(answerStep*8))) : 1;
-  const zoomForReveal = canZoom ? Math.min(maxZoom, Math.max(3,(stage.max-stage.min)/(answerStep*12))) : 1;
-
-  const [target,setTarget] = useState(()=> rnd(0,10,1));
-  const [zoom,setZoom] = useState(1);
-  const [zoomCenter,setZoomCenter] = useState((stage.min+stage.max)/2);
-  const [phase,setPhase] = useState("ask");
-  const [correct,setCorrect] = useState(null);
-  const [correctCount,setCorrectCount] = useState(0);
-  const [hint,setHint] = useState(false);
-  const [stageDone,setStageDone] = useState(false);
-
-  const [picked,setPicked] = useState(null);
-  const [typed,setTyped] = useState("");
-  const [choices,setChoices] = useState([]);
-
-  const wrapRef = useRef(null);
-  const prevTarget = useRef(null);
-  const pointers = useRef(new Map());
-  const startDist = useRef(0);
-  const startZoom = useRef(1);
-
-  // 1問目は数字あり、以降は足場外し（ヒントで一時表示）
-  // 1問目と結果表示はすべての数字を表示。ヒントは正答の前後だけを見せる。
-  const showAllLabels = (qNo===1) || phase==="result";
-  // ヒント時に表示する「正答の前後の値」（その目もり段階の刻みで前後1つずつ）
-  const hintStep = isThermo ? curStep : (canZoom ? answerStep : stage.baseStep);
-  const hintVals = hint ? [
-    Math.round((target - hintStep)*1e6)/1e6,
-    Math.round((target + hintStep)*1e6)/1e6,
-  ].filter(v=> v>=curMin-1e-9 && v<=curMax+1e-9) : null;
-
-  const buildQuestion = (qno)=>{
-    const setup = isThermo ? thermoSetup(qno||qNo) : {min:stage.min,max:stage.max,tickStep:answerStep};
-    const st = isThermo ? setup.tickStep : answerStep;
-    // 直前の問題と同じ答えにならないよう、必要なら引き直す（候補が2つ以上ある場合のみ）
-    const span = Math.round((setup.max-setup.min)/st);
-    let t = rnd(setup.min, setup.max, st);
-    if(span>2){ // 内部の候補が2つ以上あるときだけ重複回避
-      let guard=0;
-      while(prevTarget.current!=null && Math.abs(t-prevTarget.current)<1e-9 && guard<20){
-        t = rnd(setup.min, setup.max, st); guard++;
+    let significantSeen = (intPart !== "0");
+    for (let k = 0; k < decKeep.length; k++) {
+      const ch = decKeep[k];
+      if (!significantSeen && ch === "0") {
+        html += '<span class="fade-target">' + ch + '</span>';
+      } else {
+        significantSeen = true;
+        html += '<span class="dec-part">' + ch + '</span>';
       }
     }
-    prevTarget.current = t;
-    setTarget(t);
-    setPhase("ask"); setCorrect(null); setPicked(null); setTyped("");
-    setZoom(1); setZoomCenter((stage.min+stage.max)/2); setHint(false);
-    if(stage.op==="choose"){
-      const opts=new Set([t]);
-      while(opts.size<4){ opts.add(rnd(setup.min,setup.max,st)); }
-      setChoices([...opts].sort(()=>Math.random()-0.5));
-    }
-  };
-
-  useEffect(()=>{ setQNo(1); setCorrectCount(0); setStageDone(false); prevTarget.current=null; buildQuestion(1); },[stage.id]);
-
-  const nextQuestion=()=>{
-    if(qNo>=QUESTIONS_PER_STAGE){
-      onFinish(correctCount);
-      setStageDone(true);
-      return;
-    }
-    const nq = qNo+1;
-    setQNo(nq);
-    buildQuestion(nq);
-  };
-
-  /* ピンチ＆スクロール（パン） */
-  const panLast = useRef(null);
-  const onPointerDown=(e)=>{
-    if(!canZoom)return;
-    pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
-    if(pointers.current.size===2){
-      const pts=[...pointers.current.values()];
-      startDist.current=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
-      startZoom.current=zoom;
-      panLast.current=null;
-      if(wrapRef.current) wrapRef.current.dataset.pinching="1";
-    }else if(pointers.current.size===1 && zoom>1.05){
-      // 1本指ドラッグでスクロール開始
-      panLast.current={x:e.clientX, y:e.clientY, moved:0};
-    }
-  };
-  const onPointerMove=(e)=>{
-    if(!canZoom||!pointers.current.has(e.pointerId))return;
-    pointers.current.set(e.pointerId,{x:e.clientX,y:e.clientY});
-    if(pointers.current.size===2){
-      const pts=[...pointers.current.values()];
-      const dist=Math.hypot(pts[0].x-pts[1].x,pts[0].y-pts[1].y);
-      let z=startZoom.current*(dist/startDist.current);
-      z=Math.min(maxZoom,Math.max(1,z));
-      setZoom(z);
-      const focus = stage.op==="place" && picked!=null ? picked : target;
-      if(z>1.05 && zoom<=1.05) setZoomCenter(focus); // 拡大開始時だけ注目点へ寄せる
-    }else if(pointers.current.size===1 && panLast.current && zoom>1.05){
-      // 横向き（数直線・定規）は左右ドラッグ、縦向き（ビーカー）は上下ドラッグでスクロール
-      const horizontal = stage.theme==="abstract" || stage.theme==="ruler";
-      const rect = wrapRef.current ? wrapRef.current.getBoundingClientRect() : null;
-      const dyPx = e.clientY - panLast.current.y;
-      const dxPx = e.clientX - panLast.current.x;
-      panLast.current.y = e.clientY;
-      panLast.current.x = e.clientX;
-      const movedThis = horizontal ? Math.abs(dxPx) : Math.abs(dyPx);
-      panLast.current.moved = (panLast.current.moved||0) + movedThis;
-      if(panLast.current.moved>6 && wrapRef.current) wrapRef.current.dataset.pinching="1"; // ドラッグ中はタップ無効
-      const span = stage.max - stage.min;
-      const viewSpan = span / zoom;          // いま見えている値の幅
-      setZoomCenter(c=>{
-        let nv;
-        if(horizontal){
-          const widthPx = rect ? rect.width : 700;
-          const valPerPx = viewSpan / widthPx;
-          nv = c - dxPx*valPerPx;            // 右に引くと小さい値へ（自然なスクロール）
-        }else{
-          const heightPx = rect ? rect.height : 320;
-          const valPerPx = viewSpan / heightPx;
-          nv = c + dyPx*valPerPx;            // 下に引くと数字が下がる
-        }
-        const half = viewSpan/2;
-        nv = Math.min(stage.max-half, Math.max(stage.min+half, nv));
-        return nv;
-      });
-    }
-  };
-  const onPointerUp=(e)=>{
-    pointers.current.delete(e.pointerId);
-    if(pointers.current.size<2 && wrapRef.current) wrapRef.current.dataset.pinching="0";
-    if(pointers.current.size===0) panLast.current=null;
-  };
-
-  const zoomBy=(f)=>{
-    const z=Math.min(maxZoom,Math.max(1,zoom*f));
-    setZoom(z);
-    const focus = stage.op==="place"&&picked!=null?picked:target;
-    if(f>1) setZoomCenter(focus);
-  };
-
-  const judge=(val)=>{
-    const tol = (isThermo ? curStep : answerStep)*0.45;
-    const ok=Math.abs(val-target)<tol;
-    setCorrect(ok); setPhase("result"); onResult(ok);
-    if(ok) setCorrectCount(c=>c+1);
-    if(canZoom){
-      setZoom(z=>Math.max(z,zoomForReveal));
-      setZoomCenter(target);
-    }
-  };
-  const submitType=()=>{
-    const v=parseFloat(typed); if(isNaN(v))return;
-    judge(Math.round(v*1e6)/1e6);
-  };
-
-  const th=THEME_INFO[stage.theme];
-
-  // ステージ完了画面
-  if(stageDone){
-    const cleared = correctCount>=QUESTIONS_PER_STAGE-1;
-    return (
-      <div className="home-screen" style={{textAlign:"center",marginTop:10}}>
-        <div style={{background:cleared?"#e8f7f0":"#fff7e8",border:`2px solid ${cleared?"var(--mint)":"var(--sun)"}`,
-          borderRadius:20,padding:"26px 18px",marginBottom:16,animation:"pop .4s ease"}}>
-          <div style={{fontSize:54}}>{cleared?"🏆":"🎯"}</div>
-          <div style={{fontSize:24,fontWeight:900,color:cleared?"var(--mint-dark)":"var(--ink)"}}>
-            {cleared?"ステージクリア！":"あと少し！"}</div>
-          <div style={{fontSize:18,fontWeight:800,marginTop:8}}>
-            {QUESTIONS_PER_STAGE}問中 <span style={{color:"var(--coral)",fontSize:26}}>{correctCount}</span>問せいかい</div>
-          {!cleared && <div style={{fontSize:13,color:"var(--soft)",marginTop:6}}>4問せいかいでつぎのステージがひらくよ</div>}
-          {cleared && nextStage && <div style={{fontSize:13,color:"var(--mint-dark)",marginTop:6,fontWeight:700}}>
-            つぎは「{nextStage.name}」がプレイできる！</div>}
-        </div>
-        <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-          <button onClick={()=>{setQNo(1);setCorrectCount(0);setStageDone(false);buildQuestion();}} style={navBtn}>もういちど</button>
-          {cleared && nextStage && <button onClick={()=>onNextStage(nextStage.id)} style={primaryBtn}>つぎのステージ →</button>}
-          <button onClick={onHome} style={navBtn}>ステージ選択へ</button>
-        </div>
-      </div>
-    );
+    html += '<span class="hidden-zero">' + lastDigit + '</span>';
+    return html;
   }
 
-  return (
-    <div className="play-screen">
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:10}}>
-        <button onClick={onHome} style={navBtn}>← もどる</button>
-        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"center"}}>
-          {Array.from({length:QUESTIONS_PER_STAGE}).map((_,i)=>(
-            <div key={i} style={{width:i+1===qNo?14:10,height:10,borderRadius:6,
-              background:i<qNo-1?"var(--mint)":(i+1===qNo?"var(--coral)":"var(--grid)"),transition:"all .2s"}}/>
-          ))}
-        </div>
-        <div style={{fontWeight:800,whiteSpace:"nowrap",fontSize:14}}>{th.emoji}{stage.name} <span style={{color:"var(--soft)",fontWeight:800}}>{qNo}/{QUESTIONS_PER_STAGE}</span></div>
-      </div>
+  function renderNumberLine() {
+    numberLineEl.innerHTML = "";
+    const axis = document.createElement("div");
+    axis.className = "axis";
+    numberLineEl.appendChild(axis);
 
-      {/* お題 */}
-      <div style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"14px 16px",marginBottom:14,boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
-        {stage.op==="choose" && <Prompt>↑の<span style={{color:"var(--coral)"}}>矢印</span>の場所はいくつ？</Prompt>}
-        {stage.op==="place" && <Prompt><Big>{disp(target,ansDec)}{th.unit}</Big> の場所を指でタップしよう</Prompt>}
-        {stage.op==="type" && <Prompt>↓の<span style={{color:"var(--coral)"}}>矢印</span>の数を入力しよう</Prompt>}
-      </div>
+    const { startVal, endVal, step, decimals, majorEvery } = state;
+    const totalTicks = Math.round((endVal - startVal) / step);
+    numberLineEl.style.minWidth = "";
 
-      {/* ヒント */}
-      {phase==="ask" && (qNo>1 || stage.id===5 || stage.id===6) && (
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,fontSize:12.5,color:"var(--soft)"}}>
-          <span>{stage.id===5
-            ? (hint?"えらんだ数の下1けたも見えています":"えらんだ数の下1けたはかくれています")
-            : (hint?"正かいの前後の数字を見せています":(showAllLabels?"数字が見えています":"目もりの数字はかくれています"))}</span>
-          <button onClick={()=>setHint(h=>!h)}
-            style={{background:hint?"var(--sun)":"#fff",border:"2px solid var(--sun)",borderRadius:12,
-              padding:"6px 14px",fontWeight:800,cursor:"pointer",color:"var(--ink)",fontSize:13}}>
-            💡 ヒント{hint?"をかくす":"（数字を見る）"}
-          </button>
-        </div>
-      )}
+    for (let i = 0; i <= totalTicks; i++) {
+      const value = round(startVal + i * step, decimals);
+      const isMajor = (i % majorEvery === 0);
+      const pct = (i / totalTicks) * 100;
 
-      {/* ズーム案内 */}
-      {canZoom && phase==="ask" && (
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--sky)",
-          border:"2px dashed var(--mint)",borderRadius:12,padding:"7px 12px",marginBottom:10,fontSize:12.5,color:"var(--line)"}}>
-          <span>🔍 2本指でひろげるとかくれた目もりが出るよ
-            {stage.id===6 && "（もっとひろげると0.001まで！）"}（×{zoom.toFixed(1)}）</span>
-          <span style={{display:"flex",gap:6}}>
-            <button onClick={()=>zoomBy(1.8)} style={miniBtn}>＋</button>
-            <button onClick={()=>zoomBy(1/1.8)} style={miniBtn}>－</button>
-          </span>
-        </div>
-      )}
+      const tick = document.createElement("div");
+      tick.className = "tick" + (isMajor ? " major" : "");
+      tick.style.left = pct + "%";
+      tick.dataset.value = value;
 
-      {/* 描画エリア */}
-      <div ref={wrapRef}
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
-        className={"play-stage"+(stage.theme==="thermometer"||stage.theme==="beaker"?" tall":" wide")}
-        style={{background:"#fff",border:"2px solid var(--grid)",borderRadius:16,padding:"10px 6px",marginBottom:14,
-          touchAction:canZoom?"none":"auto",overflow:"hidden",boxShadow:"0 3px 0 rgba(0,0,0,.04)"}}>
-        {stage.theme==="thermometer" && (
-          <Thermometer stage={stage} range={range} labelMode={thermoLabelMode} tickStep={thermoTickStep}
-            arrow={stage.op==="choose"||stage.op==="type"?target:null}
-            marker={stage.op==="place"?picked:null}
-            pickable={stage.op==="place"&&phase==="ask"}
-            onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"} hintVals={hintVals}/>
-        )}
-        {stage.theme==="beaker" && (
-          <Beaker stage={stage} zoom={zoom} focus={zoomCenter} showAllLabels={showAllLabels} hintVals={hintVals}
-            marker={stage.op==="place"?picked:null}
-            pickable={stage.op==="place"&&phase==="ask"}
-            onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
-        )}
-        {(stage.theme==="ruler"||stage.theme==="abstract") && (
-          <NumberLine stage={stage} zoom={zoom} zoomCenter={zoomCenter} showAllLabels={showAllLabels} hintVals={hintVals}
-            arrow={stage.op==="choose"||stage.op==="type"?target:null}
-            marker={stage.op==="place"?picked:null}
-            pickable={stage.op==="place"&&phase==="ask"}
-            onPick={(v)=>setPicked(v)} answer={target} reveal={phase==="result"}/>
-        )}
-      </div>
+      const line = document.createElement("div");
+      line.className = "tick-line";
+      tick.appendChild(line);
 
-      {/* 操作エリア */}
-      {stage.op==="choose" && phase==="ask" && (
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10}}>
-          {choices.map((c,i)=>(
-            <button key={i} onClick={()=>{setPicked(c);judge(c);}} style={choiceBtn}>{disp(c,ansDec)}{th.unit}</button>
-          ))}
-        </div>
-      )}
-      {stage.op==="place" && phase==="ask" && (
-        <div style={{textAlign:"center"}}>
-          {stage.theme!=="thermometer" && (
-            <div style={{fontSize:13,color:"var(--soft)",marginBottom:8}}>
-              えらんだ数：<b style={{color:"var(--ink)",fontSize:18}}>{picked!=null?maskChosen(picked,ansDec,stage,hint)+th.unit:"—"}</b></div>
-          )}
-          <button disabled={picked==null} onClick={()=>judge(picked)} style={{...primaryBtn,opacity:picked==null?.4:1}}>これにきめる！</button>
-        </div>
-      )}
-      {stage.op==="type" && phase==="ask" && (
-        <Tenkey value={typed} setValue={setTyped} onSubmit={submitType} decimals={ansDec}/>
-      )}
+      if (isMajor) {
+        const label = document.createElement("div");
+        label.className = "tick-label";
+        label.innerHTML = makeLabelHTML(value, decimals);
+        tick.appendChild(label);
+      }
 
-      {phase==="result" && (
-        <Result correct={correct} target={target}
-          picked={stage.op==="type"?parseFloat(typed):picked}
-          decimals={ansDec} unit={th.unit} streak={streak}
-          isLast={qNo>=QUESTIONS_PER_STAGE} onNext={nextQuestion} onHome={onHome}/>
-      )}
-    </div>
-  );
-}
+      tick.addEventListener("click", () => onTickClick(value, tick));
+      numberLineEl.appendChild(tick);
+    }
+    updateClickable();
+  }
 
-/* ---------------- パーツ ---------------- */
-const Prompt=({children})=> <div style={{fontSize:16,fontWeight:700,lineHeight:1.5}}>{children}</div>;
-const Big=({children})=> <span style={{fontSize:28,fontWeight:900,color:"var(--coral)",margin:"0 4px",letterSpacing:"-.5px"}}>{children}</span>;
+  function updateClickable() {
+    numberLineEl.querySelectorAll(".tick").forEach(t => {
+      if (state.quizActive) t.classList.add("clickable");
+      else t.classList.remove("clickable");
+    });
+  }
 
-const navBtn={background:"#fff",border:"2px solid var(--grid)",borderRadius:12,padding:"6px 12px",fontWeight:800,cursor:"pointer",color:"var(--ink)",fontSize:13};
-const miniBtn={background:"#fff",border:"2px solid var(--mint)",borderRadius:8,width:30,height:28,fontWeight:900,cursor:"pointer",color:"var(--mint-dark)",fontSize:16,lineHeight:1};
-const choiceBtn={background:"#fff",border:"2px solid var(--line)",borderRadius:14,padding:"16px 0",fontSize:22,fontWeight:900,cursor:"pointer",color:"var(--ink)",boxShadow:"0 4px 0 rgba(0,0,0,.06)",transition:"transform .1s"};
-const primaryBtn={background:"var(--mint)",border:"none",borderRadius:14,padding:"13px 28px",fontSize:18,fontWeight:900,cursor:"pointer",color:"#fff",boxShadow:"0 4px 0 var(--mint-dark)"};
+  function targetDisplay() { return fmt(state.targetVal, state.decimals); }
 
-function Tenkey({value,setValue,onSubmit,decimals}){
-  const tap=(k)=>{
-    if(k==="←") setValue(v=>v.slice(0,-1));
-    else if(k==="."){ if(!value.includes(".")&&value!=="") setValue(v=>v+"."); }
-    else setValue(v=> v.length<6 ? v+k : v);
-  };
-  const keyBtn={padding:"14px 0",fontSize:20,fontWeight:800,borderRadius:12,
-    border:"2px solid var(--grid)",background:"#fff",cursor:"pointer",color:"var(--ink)"};
-  return (
-    <div style={{maxWidth:640,margin:"0 auto"}}>
-      {/* 入力表示欄 */}
-      <div style={{background:"#fff",border:"2px solid var(--line)",borderRadius:12,
-        padding:"10px",textAlign:"center",fontSize:28,fontWeight:900,minHeight:50,marginBottom:10,
-        display:"flex",alignItems:"center",justifyContent:"center",color:"var(--ink)"}}>
-        {value||<span style={{color:"var(--soft)"}}>{(0).toFixed(decimals)}</span>}</div>
-      {/* キー：横長に2段(上1-5 / 下6-0)＋操作キーを並べる */}
-      <div style={{display:"flex",gap:10,alignItems:"stretch",flexWrap:"wrap"}}>
-        <div style={{flex:"1 1 280px",display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
-          {["1","2","3","4","5","6","7","8","9","0"].map(k=>(
-            <button key={k} onClick={()=>tap(k)} style={keyBtn}>{k}</button>
-          ))}
-          <button onClick={()=>tap(".")} style={keyBtn}>.</button>
-          <button onClick={()=>tap("←")} style={{...keyBtn,color:"var(--coral)"}}>←</button>
-        </div>
-        <button onClick={onSubmit} disabled={value===""}
-          style={{...primaryBtn,flex:"1 1 120px",minWidth:120,opacity:value===""?.4:1,padding:"0 18px"}}>
-          こたえあわせ</button>
-      </div>
-    </div>
-  );
-}
+  function updateProgress() {
+    progressEl.textContent = "問題 " + (state.qIndex + 1) + " / " + state.qTotal;
+    levelNameEl.textContent = LEVEL_NAMES[state.level] || "";
+  }
 
-function Result({correct,target,picked,decimals,unit,streak,isLast,onNext,onHome}){
-  const milestone=BADGES.find(b=>b.streak===streak);
-  const diff = (!correct && !isNaN(picked)) ? Math.abs(Math.round((target-picked)*1e6)/1e6) : null;
-  return (
-    <div style={{textAlign:"center",marginTop:6}}>
-      <div style={{background:correct?"#e8f7f0":"#fdeee9",border:`2px solid ${correct?"var(--mint)":"var(--coral)"}`,
-        borderRadius:18,padding:"18px 16px",marginBottom:14,animation:"pop .35s ease"}}>
-        <div style={{fontSize:46}}>{correct?"🎉":"💪"}</div>
-        <div style={{fontSize:22,fontWeight:900,color:correct?"var(--mint-dark)":"var(--coral)"}}>
-          {correct?"せいかい！":"おしい！"}</div>
-        {!correct && <div style={{marginTop:6,fontSize:15}}>
-          きみのこたえ <b>{isNaN(picked)?"—":disp(picked,decimals)+unit}</b> /
-          ただしくは <b style={{color:"var(--mint-dark)"}}>{disp(target,decimals)+unit}</b></div>}
-        {!correct && diff!=null && <div style={{marginTop:4,fontSize:13,color:"var(--coral)",fontWeight:700}}>
-          あと {disp(diff,decimals)}{unit} ずれていたよ</div>}
-        {correct && <div style={{marginTop:4,fontSize:14,color:"var(--line)"}}>れんぞく {streak} 問せいかい！</div>}
-        {milestone && correct && <div style={{marginTop:10,fontSize:15,fontWeight:800}}>{milestone.emoji} 「{milestone.label}」バッジゲット！</div>}
-      </div>
-      <button onClick={onNext} style={primaryBtn}>{isLast?"けっかを見る →":"つぎの問題 →"}</button>
-    </div>
-  );
-}
+  // ステップ表示の状態を更新（active=今やること, done=おわった）
+  // step: 1=魔法の0 を待つ, 2=小数点をかくす を待つ, 3=整数でさがす
+  function setStep(step) {
+    [stepItem1, stepItem2, stepItem3].forEach(el => el.classList.remove("active", "done"));
+    if (step >= 2) stepItem1.classList.add("done");
+    if (step >= 3) stepItem2.classList.add("done");
+    if (step === 1) stepItem1.classList.add("active");
+    if (step === 2) stepItem2.classList.add("active");
+    if (step === 3) stepItem3.classList.add("active");
+  }
 
-if(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches){
-  document.body.classList.add("reduced");
-}
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  function updateScore() {
+    scoreBox.textContent = "⭐ 正解 " + state.correct + "問";
+    rewardBox.innerHTML = "";
+    REWARDS.forEach(r => {
+      if (state.correct >= r.n) {
+        const span = document.createElement("span");
+        span.textContent = r.emoji;
+        rewardBox.appendChild(span);
+      }
+    });
+  }
+
+  function showHome() { playScreen.classList.add("hidden"); homeScreen.classList.remove("hidden"); }
+  function showPlay() { homeScreen.classList.add("hidden"); playScreen.classList.remove("hidden"); }
+
+  function startLevel() {
+    state.qIndex = 0;
+    state.correct = 0;
+    updateScore();
+    loadProblem();
+  }
+
+  function loadProblem() {
+    const cfg = buildLevelConfig(state.level, state.qIndex);
+    state = Object.assign(state, cfg);
+    state.solved = false;
+
+    btnStep2.classList.remove("bg-orange-500", "hover:bg-orange-600", "text-white", "shadow-[0_4px_0_#9a3412]");
+    btnStep2.classList.add("bg-slate-300", "text-slate-600", "shadow-[0_4px_0_#94a3b8]");
+
+    renderNumberLine();
+    quizResult.innerHTML = "";
+    updateProgress();
+
+    // 出題文（常時表示）
+    quizPromptEl.innerHTML = "🎯 数直線から <span class='text-amber-300'>" + targetDisplay() + "</span> をさがそう！";
+
+    if (state.level === 1) {
+      // 整数：ステップ・操作ボタンなし
+      stepBar.classList.add("hidden");
+      actionArea.classList.add("hidden");
+      state.quizActive = true;
+      updateClickable();
+      quizArea.classList.remove("hidden");
+      guideEl.textContent = "目盛りをクリックしてさがそう 👇";
+    } else {
+      // 小数：ステップ＆操作ボタンあり
+      stepBar.classList.remove("hidden");
+      actionArea.classList.remove("hidden");
+      setStep(1);
+
+      btnStep1.disabled = false;
+      btnStep2.disabled = true;
+      state.quizActive = false;
+      updateClickable();
+      quizArea.classList.add("hidden");
+      guideEl.textContent = "まずは①「魔法の0」を書き足してみよう！";
+    }
+  }
+
+  btnStep1.addEventListener("click", () => {
+    numberLineEl.querySelectorAll(".hidden-zero").forEach(z => z.classList.add("revealed"));
+    btnStep1.disabled = true;
+    btnStep2.disabled = false;
+    btnStep2.classList.remove("bg-slate-300", "text-slate-600", "shadow-[0_4px_0_#94a3b8]");
+    btnStep2.classList.add("bg-orange-500", "hover:bg-orange-600", "text-white", "shadow-[0_4px_0_#9a3412]");
+    setStep(2);
+    guideEl.textContent = "ぜんぶの数の後ろに「0」がついたね！ つぎは②で小数点をかくそう 🙈";
+  });
+
+  btnStep2.addEventListener("click", () => {
+    numberLineEl.querySelectorAll(".fade-target").forEach(d => d.classList.add("faded"));
+    btnStep2.disabled = true;
+    state.quizActive = true;
+    updateClickable();
+    quizArea.classList.remove("hidden");
+    setStep(3);
+    const intTarget = toIntString(state.targetVal, state.decimals);
+    guideEl.innerHTML = "🎉 整数の数直線になったよ！ あとは整数 <span class='text-red-600'>" + intTarget + "</span> をさがすだけ！";
+  });
+
+  function onTickClick(value, tickEl) {
+    if (!state.quizActive) return;
+    const isCorrect = Math.abs(round(value, state.decimals) - state.targetVal) < Math.pow(10, -(state.decimals + 2));
+    numberLineEl.querySelectorAll(".pin").forEach(p => p.remove());
+
+    if (isCorrect) {
+      const pin = document.createElement("div");
+      pin.className = "pin";
+      pin.textContent = "📍";
+      tickEl.appendChild(pin);
+      state.quizActive = false;
+      state.solved = true;
+      updateClickable();
+
+      // 正解数を増やしてご褒美
+      state.correct++;
+      updateScore();
+      const reward = REWARDS.find(r => r.n === state.correct);
+      let rewardMsg = "";
+      if (reward) {
+        rewardMsg = " <span class='reward-pop inline-block'>" + reward.emoji + " " + reward.msg + "</span>";
+      }
+
+      const isLast = (state.qIndex >= state.qTotal - 1);
+      if (isLast) {
+        const finalReward = REWARDS.find(r => r.n === state.correct);
+        const fe = finalReward ? finalReward.emoji : "🎉";
+        quizResult.innerHTML =
+          "<span class='text-green-600'>🎊 大正解！ " + targetDisplay() +
+          " はここだ！</span>" + rewardMsg;
+        guideEl.innerHTML = fe + " レベル" + state.level + " しゅうりょう！ 5問中 <span class='text-red-600'>" +
+          state.correct + "問せいかい</span>！ 「レベル選択へ」で次にすすもう！";
+      } else {
+        quizResult.innerHTML =
+          "<span class='text-green-600'>🎊 大正解！ " + targetDisplay() + " はここだ！</span>" + rewardMsg +
+          " <button id='nextBtn' class='ml-2 px-4 py-2 rounded-xl font-bold text-sm bg-green-500 hover:bg-green-600 text-white shadow-[0_3px_0_#15803d] active:translate-y-0.5 active:shadow-none transition'>つぎの問題へ ▶</button>";
+        const nextBtn = document.getElementById("nextBtn");
+        if (nextBtn) nextBtn.addEventListener("click", () => { state.qIndex++; loadProblem(); });
+      }
+    } else {
+      const clickedInt = toIntString(value, state.decimals);
+      const clickedDec = fmt(value, state.decimals);
+      if (state.decimals === 0) {
+        quizResult.innerHTML =
+          "<span class='text-red-500'>おしい！そこは「" + clickedDec + "」だよ。</span>";
+      } else {
+        quizResult.innerHTML =
+          "<span class='text-red-500'>おしい！そこは「" + clickedInt + " (元の " + clickedDec + ")」だよ。</span>";
+      }
+    }
+  }
+
+  levelStartBtns.forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.level = parseInt(btn.dataset.level, 10);
+      showPlay();
+      startLevel();
+    });
+  });
+
+  document.getElementById("backBtn").addEventListener("click", () => { showHome(); });
+
+  // バージョンバッヂを反映
+  document.querySelectorAll(".version-badge").forEach(el => { el.textContent = APP_VERSION; });
+
+  showHome();
+})();
 </script>
 </body>
 </html>
