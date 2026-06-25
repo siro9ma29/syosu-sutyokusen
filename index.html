@@ -89,7 +89,10 @@
       レベル4<br><span class="text-sm font-bold text-blue-600">0.001のくらい</span>
     </button>
     <button data-level="5" class="level-start sm:col-span-2 px-5 py-6 rounded-2xl font-extrabold text-lg bg-amber-100 hover:bg-amber-200 text-amber-900 shadow-[0_5px_0_#fcd34d] active:translate-y-1 active:shadow-none transition">
-      レベル5 🌟<br><span class="text-sm font-bold text-amber-700">ミックス（0.1〜0.001のくらい）</span>
+      レベル5 🌟<br><span class="text-sm font-bold text-amber-700">ミックス（小数スタートあり・10問れんぞくでクリア🔥）</span>
+    </button>
+    <button data-level="6" id="level6Btn" class="level-start hidden sm:col-span-2 px-5 py-6 rounded-2xl font-extrabold text-lg bg-purple-900 hover:bg-purple-800 text-white shadow-[0_5px_0_#581c87] active:translate-y-1 active:shadow-none transition">
+      レベル6 🔮 シークレット<br><span class="text-sm font-bold text-purple-200">じぶんの力でさがそう（ヒントなし）</span>
     </button>
   </div>
 </div>
@@ -151,11 +154,14 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "v1.1.0";
+  const APP_VERSION = "v1.3.0";
+  const L6_KEY = "kakurezero_level6_unlocked";
   let state = {
     level: 1, startVal: 0, endVal: 20, step: 1, decimals: 0,
     targetVal: 0, quizActive: false, qIndex: 0, qTotal: 5, solved: false,
-    correct: 0   // このレベルでの正解数
+    correct: 0,   // このレベルでの正解数
+    streak: 0,    // 連続正解数（レベル5用）
+    streakNeed: 10 // レベル5のクリアに必要な連続正解数
   };
 
   const LEVEL_NAMES = {
@@ -163,10 +169,11 @@
     2: "レベル2（0.1のくらい）",
     3: "レベル3（0.01のくらい）",
     4: "レベル4（0.001のくらい）",
-    5: "レベル5（ミックス）"
+    5: "レベル5（ミックス）",
+    6: "レベル6（シークレット）"
   };
 
-  // ご褒美：正解数のしきい値とバッジ
+  // ご褒美：正解数のしきい値とバッジ（レベル1〜4：全5問）
   const REWARDS = [
     { n: 1, emoji: "🌱", msg: "はじめの1問クリア！" },
     { n: 2, emoji: "⭐", msg: "いいちょうし！" },
@@ -174,6 +181,23 @@
     { n: 4, emoji: "🏅", msg: "あと1問！すごい！" },
     { n: 5, emoji: "🏆", msg: "ぜんもんせいかい！トロフィー！" }
   ];
+
+  // ご褒美：レベル5（連続10問）用
+  const REWARDS_L5 = [
+    { n: 1, emoji: "🌱", msg: "1問れんぞく！" },
+    { n: 2, emoji: "🌿", msg: "2れんぞく！" },
+    { n: 3, emoji: "⭐", msg: "3れんぞく！いいちょうし！" },
+    { n: 4, emoji: "✨", msg: "4れんぞく！" },
+    { n: 5, emoji: "🎖️", msg: "5れんぞく！はんぶん！" },
+    { n: 6, emoji: "🔥", msg: "6れんぞく！のってきた！" },
+    { n: 7, emoji: "🏅", msg: "7れんぞく！すごい！" },
+    { n: 8, emoji: "💎", msg: "8れんぞく！あと2問！" },
+    { n: 9, emoji: "👑", msg: "9れんぞく！あと1問！" },
+    { n: 10, emoji: "🏆", msg: "10れんぞく！かんぺきクリア！" }
+  ];
+
+  // 現在のレベルで使うご褒美テーブル
+  function rewardTable() { return (state.level === 5 || state.level === 6) ? REWARDS_L5 : REWARDS; }
 
   const homeScreen = document.getElementById("homeScreen");
   const playScreen = document.getElementById("playScreen");
@@ -211,11 +235,12 @@
       return { startVal: r.start, endVal: r.end, step: 1, decimals: 0, targetVal: target, majorEvery: 5 };
     }
 
-    // ミックスレベル：2〜4のどれかを引く
-    let useLevel = level;
-    if (level === 5) {
-      useLevel = 2 + Math.floor(Math.random() * 3); // 2,3,4
+    // ミックスレベル：小数スタート問題を含む専用生成
+    if (level === 5 || level === 6) {
+      return buildLevel5Config();
     }
+
+    let useLevel = level;
 
     if (useLevel === 2) {
       const target = round((Math.floor(Math.random() * 49) + 1) / 10, 1);
@@ -241,9 +266,54 @@
     return { startVal: start, endVal: end, step: 0.001, decimals: 3, targetVal: target, majorEvery: 10 };
   }
 
+  // レベル5専用：0.1/0.01/0.001 をミックス。小数スタート問題も含む。
+  // 0.01・0.001（小数スタートが映える方）を多めに出題する。
+  function buildLevel5Config() {
+    // 重み付き抽選：0.1=2, 0.01=4, 0.001=4
+    const r = Math.random();
+    const kind = r < 0.2 ? 1 : (r < 0.6 ? 2 : 3); // 1=0.1, 2=0.01, 3=0.001
+
+    if (kind === 1) {
+      // 0.1のくらい：0スタート or 整数スタート
+      const intStart = Math.floor(Math.random() * 4); // 0〜3
+      const start = intStart;
+      const end = start + 1;
+      const idx = Math.floor(Math.random() * 9) + 1; // 1〜9
+      const target = round(start + idx * 0.1, 1);
+      return { startVal: start, endVal: end, step: 0.1, decimals: 1, targetVal: target, majorEvery: 10 };
+    }
+
+    if (kind === 2) {
+      // 0.01のくらい：4.2 のような小数スタートを含む
+      const intPart = Math.floor(Math.random() * 5) + 1;  // 1〜5
+      const decFirst = Math.floor(Math.random() * 10);     // 0〜9 → 4.2 など
+      const start = round(intPart + decFirst / 10, 2);
+      const end = round(start + 0.1, 2);
+      const tickCount = Math.round((end - start) / 0.01); // 10
+      const idx = Math.floor(Math.random() * (tickCount - 1)) + 1;
+      const target = round(start + idx * 0.01, 2);
+      return { startVal: start, endVal: end, step: 0.01, decimals: 2, targetVal: target, majorEvery: 10 };
+    }
+
+    // kind === 3 → 0.001のくらい：4.29 のような小数スタートを含む
+    const intPart = Math.floor(Math.random() * 5) + 1;   // 1〜5
+    const decFirst = Math.floor(Math.random() * 10);      // 0〜9
+    const decSecond = Math.floor(Math.random() * 10);     // 0〜9 → 4.29 など
+    const start = round(intPart + decFirst / 10 + decSecond / 100, 3);
+    const end = round(start + 0.01, 3);
+    const tickCount = Math.round((end - start) / 0.001); // 10
+    const idx = Math.floor(Math.random() * (tickCount - 1)) + 1;
+    const target = round(start + idx * 0.001, 3);
+    return { startVal: start, endVal: end, step: 0.001, decimals: 3, targetVal: target, majorEvery: 10 };
+  }
+
   function makeLabelHTML(value, decimals) {
     if (decimals === 0) {
       return '<span class="int-part">' + value + '</span>';
+    }
+    // レベル6：ステップなし。ふつうに小数を表示する。
+    if (state.level === 6) {
+      return '<span class="int-part">' + value.toFixed(decimals) + '</span>';
     }
     const s = value.toFixed(decimals);
     const [intPart, decPartFull] = s.split(".");
@@ -319,7 +389,11 @@
   function targetDisplay() { return fmt(state.targetVal, state.decimals); }
 
   function updateProgress() {
-    progressEl.textContent = "問題 " + (state.qIndex + 1) + " / " + state.qTotal;
+    if (state.level === 5) {
+      progressEl.textContent = "れんぞく " + state.streak + " / " + state.streakNeed;
+    } else {
+      progressEl.textContent = "問題 " + (state.qIndex + 1) + " / " + state.qTotal;
+    }
     levelNameEl.textContent = LEVEL_NAMES[state.level] || "";
   }
 
@@ -335,10 +409,16 @@
   }
 
   function updateScore() {
-    scoreBox.textContent = "⭐ 正解 " + state.correct + "問";
+    if (state.level === 5) {
+      scoreBox.textContent = "🔥 れんぞく " + state.streak + " / " + state.streakNeed + "問";
+    } else {
+      scoreBox.textContent = "⭐ 正解 " + state.correct + "問";
+    }
     rewardBox.innerHTML = "";
-    REWARDS.forEach(r => {
-      if (state.correct >= r.n) {
+    const table = rewardTable();
+    const count = (state.level === 5) ? state.streak : state.correct;
+    table.forEach(r => {
+      if (count >= r.n) {
         const span = document.createElement("span");
         span.textContent = r.emoji;
         rewardBox.appendChild(span);
@@ -352,6 +432,8 @@
   function startLevel() {
     state.qIndex = 0;
     state.correct = 0;
+    state.streak = 0;
+    state.qTotal = (state.level === 5 || state.level === 6) ? 10 : 5;
     updateScore();
     loadProblem();
   }
@@ -371,14 +453,16 @@
     // 出題文（常時表示）
     quizPromptEl.innerHTML = "🎯 数直線から <span class='text-amber-300'>" + targetDisplay() + "</span> をさがそう！";
 
-    if (state.level === 1) {
-      // 整数：ステップ・操作ボタンなし
+    if (state.level === 1 || state.level === 6) {
+      // ステップ・操作ボタンなし：そのままさがす
       stepBar.classList.add("hidden");
       actionArea.classList.add("hidden");
       state.quizActive = true;
       updateClickable();
       quizArea.classList.remove("hidden");
-      guideEl.textContent = "目盛りをクリックしてさがそう 👇";
+      guideEl.textContent = (state.level === 6)
+        ? "🔮 ヒントなし！ 自分の力で目盛りをさがそう 👇"
+        : "目盛りをクリックしてさがそう 👇";
     } else {
       // 小数：ステップ＆操作ボタンあり
       stepBar.classList.remove("hidden");
@@ -431,21 +515,42 @@
 
       // 正解数を増やしてご褒美
       state.correct++;
+      state.streak++;
       updateScore();
-      const reward = REWARDS.find(r => r.n === state.correct);
+      const table = rewardTable();
+      const reward = table.find(r => r.n === (state.level === 5 ? state.streak : state.correct));
       let rewardMsg = "";
       if (reward) {
         rewardMsg = " <span class='reward-pop inline-block'>" + reward.emoji + " " + reward.msg + "</span>";
       }
 
+      if (state.level === 5) {
+        // レベル5：連続正解でクリア判定
+        const cleared = (state.streak >= state.streakNeed);
+        if (cleared) {
+          unlockLevel6();
+          quizResult.innerHTML =
+            "<span class='text-green-600'>🎊 大正解！ " + targetDisplay() + " はここだ！</span>" + rewardMsg;
+          guideEl.innerHTML = "🏆 レベル5 クリア！ <span class='text-red-600'>" +
+            state.streakNeed + "問れんぞくせいかい</span>！ 🔮 <span class='text-purple-700'>シークレットのレベル6が解放されたよ！</span> 「レベル選択へ」でもどろう！";
+        } else {
+          quizResult.innerHTML =
+            "<span class='text-green-600'>🎊 大正解！ " + targetDisplay() + " はここだ！</span>" + rewardMsg +
+            " <button id='nextBtn' class='ml-2 px-4 py-2 rounded-xl font-bold text-sm bg-green-500 hover:bg-green-600 text-white shadow-[0_3px_0_#15803d] active:translate-y-0.5 active:shadow-none transition'>つぎの問題へ ▶</button>";
+          const nextBtn = document.getElementById("nextBtn");
+          if (nextBtn) nextBtn.addEventListener("click", () => { state.qIndex++; loadProblem(); });
+        }
+        return;
+      }
+
       const isLast = (state.qIndex >= state.qTotal - 1);
       if (isLast) {
-        const finalReward = REWARDS.find(r => r.n === state.correct);
+        const finalReward = table.find(r => r.n === state.correct);
         const fe = finalReward ? finalReward.emoji : "🎉";
         quizResult.innerHTML =
           "<span class='text-green-600'>🎊 大正解！ " + targetDisplay() +
           " はここだ！</span>" + rewardMsg;
-        guideEl.innerHTML = fe + " レベル" + state.level + " しゅうりょう！ 5問中 <span class='text-red-600'>" +
+        guideEl.innerHTML = fe + " レベル" + state.level + " しゅうりょう！ " + state.qTotal + "問中 <span class='text-red-600'>" +
           state.correct + "問せいかい</span>！ 「レベル選択へ」で次にすすもう！";
       } else {
         quizResult.innerHTML =
@@ -455,14 +560,21 @@
         if (nextBtn) nextBtn.addEventListener("click", () => { state.qIndex++; loadProblem(); });
       }
     } else {
+      // 不正解：レベル5は連続カウントをリセット
+      if (state.level === 5 && state.streak > 0) {
+        state.streak = 0;
+        updateScore();
+      }
       const clickedInt = toIntString(value, state.decimals);
       const clickedDec = fmt(value, state.decimals);
+      const streakMsg = (state.level === 5)
+        ? " <span class='text-orange-600'>れんぞくは0にもどっちゃった…もう一度この問題からチャレンジ！</span>" : "";
       if (state.decimals === 0) {
         quizResult.innerHTML =
-          "<span class='text-red-500'>おしい！そこは「" + clickedDec + "」だよ。</span>";
+          "<span class='text-red-500'>おしい！そこは「" + clickedDec + "」だよ。</span>" + streakMsg;
       } else {
         quizResult.innerHTML =
-          "<span class='text-red-500'>おしい！そこは「" + clickedInt + " (元の " + clickedDec + ")」だよ。</span>";
+          "<span class='text-red-500'>おしい！そこは「" + clickedInt + " (元の " + clickedDec + ")」だよ。</span>" + streakMsg;
       }
     }
   }
@@ -477,9 +589,24 @@
 
   document.getElementById("backBtn").addEventListener("click", () => { showHome(); });
 
+  function isLevel6Unlocked() {
+    try { return localStorage.getItem(L6_KEY) === "1"; } catch (e) { return false; }
+  }
+  function unlockLevel6() {
+    try { localStorage.setItem(L6_KEY, "1"); } catch (e) {}
+    refreshLevel6Button();
+  }
+  function refreshLevel6Button() {
+    const b = document.getElementById("level6Btn");
+    if (!b) return;
+    if (isLevel6Unlocked()) b.classList.remove("hidden");
+    else b.classList.add("hidden");
+  }
+
   // バージョンバッヂを反映
   document.querySelectorAll(".version-badge").forEach(el => { el.textContent = APP_VERSION; });
 
+  refreshLevel6Button();
   showHome();
 })();
 </script>
